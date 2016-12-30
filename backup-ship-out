@@ -1,0 +1,64 @@
+#!/bin/bash
+# Move full synthetic backups to another folder or filesystem, hardlinking all identical files in the new folder/filesystem.
+#
+# TODO add shipping out of configurationBackup
+# TODO use and fix backup-analytics files after completing the ship-out
+# TODO check for access, and rerun with sudo
+
+
+source "${0%/*}/backup-functions" # load common functions from the same folder as this file
+
+# stop scipt on a simple command error and on error from rm
+#set -e
+set -o pipefail
+
+if [[ $# -eq 0 ]]; then
+    echo Two ways to run
+    echo  - with a number as a parameter, which will ship out all folders older than that number of days before today.
+    echo  - with a list of folders to ship out. Paths can be absolute or relative
+    echo
+    echo Each case uses a dry-run by default. Use -f as the last argument to perform the actual move. Run with sudo for local host comprehensive backups.
+    echo
+    exit 1
+fi
+
+dryrun=yes
+num_re='^[0-9]+$'
+
+# needs source and destination as options
+# you can also run it in a batch mode from the shell like this:
+# for i in /media/Backups/x/*; do backup-ship-out $i . ; done
+#
+# there is also a shipOut function in the backup-functions file that can help facilitate automatic shipping
+#
+
+#if [[ $# -eq 0 || ($# -eq 1 && "$1" == "-y") ]]; then # [[ $# -gt 1 || ($# -eq 1 && "$1" != "-y") ]]; then
+if [[ $1 =~ $num_re ]]; then
+    if [[ $2 == "-f" ]]; then
+        dryrun=no
+    fi
+    echo Moving backups that are older than $(date +%Y-%m-%d -d "$1 days ago") to $BACKUPARCHIVE
+    while read -r -a b; do
+        echo -e "Checking $BACKUPDESTDIR/$b..."
+        for f in $BACKUPDESTDIR/$b/* ; do
+            #echo -ne "Checking $f...\r"
+            backupdate=$(echo ${f%%.partial} | tr . ' ' | awk '{gsub("-",":",$NF); print $(NF-1),$NF}')     # makes the date from the folder name readable by the 'date' command - removing the .partial prefix if present, and parsing the fields properly, in case there is a dot in the name of the backup
+            date -d "$backupdate" >/dev/null 2>&1
+            if [ $? -eq 0 ]; then   # if it's a date
+                if [[ $(dateDiff -d "now" $backupdate) -gt $1 ]]; then
+                        shipOut $f $dryrun
+                fi
+            fi
+        done
+        #echo
+    done < <(sed -n 's/^\([^#].*\)\s*syntheticFullBackup.*/\1/p' $DIR/backup.schedule | tr '\r' ' ') # loop over all synthetic full backups. trim \r from the end of the line. you could trim it from the array variable too ${b[0]//[$'\r\n']}
+else
+    folders=( "$@" )
+    if [[ "${!#}" == "-f" ]]; then # last argument is -y
+        dryrun=no
+        unset "folders[${#folders[@]}-1]"    # Removes last element
+    fi
+    for f in "${folders[@]}"; do
+        shipOut $f $dryrun
+    done
+fi

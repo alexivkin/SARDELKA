@@ -1,0 +1,79 @@
+#!/bin/bash
+# Remove full synthetic backups inteligently
+
+# TODO add a check if the folder contains files not deletable by the user this script is run as, and prompt user to rerun with the -s key, so the rn commands are invoked with sudo prefix
+source "${0%/*}/backup-functions" # load common functions from the same folder as this file
+
+# stop scipt on a simple command error and on error from rm
+#set -e
+set -o pipefail
+
+if [[ $# -eq 0 ]]; then
+    echo "Four ways to run"
+    echo " - with \"safe\" as a paramter, which will remove the partial and zero entropy folders as defined in the $BACKUP_RATINGS."
+    echo " - with a number as a parameter, which will remove all folders older than the number of days indicated as the parameter."
+    echo " - with a percentage as a parameter (e.g. 1%), which will remove all folders with exclusivity less than or equal to that percentage"
+    echo " - with a list of folders to delete. Either relative to the current folder or absolute paths."
+    echo
+    echo "Each case uses a dry-run by default. Use -f as the last argument to perform the actual delete. Run with sudo for local host comprehensive backups."
+    echo "This script relies on correct content in $BACKUP_RATINGS. Please, run backup-analyzer if you are not seeing some of the backups."
+    echo "If a backup ends in .keep it will not be removed even with the -f flag"
+    echo
+    exit 1
+fi
+
+dryrun=yes
+num_re='^[0-9]+$'
+percent_re='^[0-9]+%$'
+
+#if [[ $# -eq 0 || ($# -eq 1 && "$1" == "-y") ]]; then # [[ $# -gt 1 || ($# -eq 1 && "$1" != "-y") ]]; then
+if [[ $1 == safe ]]; then
+    if [[ $2 == "-f" ]]; then
+        dryrun=no
+        cp $BACKUP_RATINGS $BACKUP_RATINGS.bak
+    fi
+    echo Removing partial backups...
+    for f in $(grep -e "\.partial" $BACKUP_RATINGS | cut -d " " -f 2); do
+        rmWithProgress $f $dryrun
+    done
+    echo Removing backups that have no exclusivity in them.
+    for f in $(grep -e "\*\*\*.* 0%" $BACKUP_RATINGS | cut -d " " -f 2); do
+        rmWithProgress $f $dryrun
+    done
+elif [[ $1 =~ $num_re ]]; then
+    if [[ $2 == "-f" ]]; then
+        dryrun=no
+        cp $BACKUP_RATINGS $BACKUP_RATINGS.bak
+    fi
+    echo Removing backups that are older than $(date +%Y-%m-%d -d "$1 days ago")
+    for f in $(sed 's/\*\*\* \([^ ]*\).*/\1/' $BACKUP_RATINGS); do
+        backupdate=$(echo ${f%%.partial} | tr . ' ' | awk '{gsub("-",":",$NF); print $(NF-1),$NF}')     # makes the date from the folder name readable by the 'date' command - removing the .partial prefix if present, and parsing the fields properly, in case there is a dot in the name of the backup
+        date -d "$backupdate" >/dev/null 2>&1
+        if [ $? -eq 0 ]; then   # if it's a date
+           if [[ $(dateDiff -d "now" $backupdate) -gt $1 ]]; then
+              rmWithProgress $f $dryrun
+           fi
+        fi
+    done
+elif [[ $1 =~ $percent_re ]]; then
+    if [[ $2 == "-f" ]]; then
+        dryrun=no
+        cp $BACKUP_RATINGS $BACKUP_RATINGS.bak
+    fi
+    percent=${1::-1} # cut the percentage sign off BASH AHOY!
+    echo Removing backups that have exclusivity less than or equal to $percent%.
+    for f in $(grep -e "\*\*\*" $BACKUP_RATINGS | awk -v limit=$percent 'int($4)<=limit {print $2}'); do
+        rmWithProgress $f $dryrun
+    done
+else
+    folders=( "$@" )
+    if [[ "${!#}" == "-f" ]]; then # last argument is -y
+        dryrun=no
+        cp $BACKUP_RATINGS $BACKUP_RATINGS.bak
+        unset "folders[${#folders[@]}-1]"    # Removes last element
+    fi
+    for f in "${folders[@]}"; do
+        rmWithProgress $f $dryrun
+    done
+
+fi

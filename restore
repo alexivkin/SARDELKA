@@ -1,0 +1,8 @@
+#!/bin/bash
+echo --------------------------------------------------- >> ~/bin/restore.log
+date >> ~/bin/restore.log
+# home dir restore dry run, remove -n to do actual run
+rsync -nvarz --stats --log-file ~/bin/restore.log /media/Backups/system/home/user/ /home/user/
+
+# backups from remote can be restored like this:
+# rsync -vaxH /media/Backups/remote/~.2014-03-12.00-00-01/ user@server:

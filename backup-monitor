@@ -1,0 +1,45 @@
+#!/bin/bash
+# read backup schedule and verify that all scheduled backups completed successfully within the proper timeframe
+# run with -n to skip emailing
+# install into anacron with
+#   sudo ln -s ~/bin/backupTools/backup-monitor /etc/cron.daily/
+
+source "${0%/*}/backup-functions" # load common functions from the same folder as this file
+
+log=$DIR/logs/monitor.log
+
+DATE=$(date +%Y-%m-%d.%H-%M-%S)
+echo --------------------------------------------------- >> $log
+echo -n "Validating backups on $DATE..." | tee -a $log
+errortext=""
+while read -r -a b; do
+	if [[ -n ${b[0]} ]]; then	# if not blank
+		if [[ -n ${b[3]} ]]; then
+			IFS=',' read -r -a parms <<< "${b[@]:3}" # split params by a comma
+		else
+			parms=()
+		fi
+		validate=$(checkBackupTime ${b[0]} $((${b[2]} * $ALERT_TOLERANCE_FACTOR + 1)) "${parms[@]}") # check and record any errors
+		if [[ -n $validate ]]; then
+			if [[ -n $errortext ]]; then
+				errortext="$errortext\n$validate"
+		        else
+				errortext=$validate
+		        fi
+		fi
+	fi
+done < <(sed "s/#.*//" $DIR/backup.schedule | tr '\r' ' ') # trim everything after a hash (i.e comments). trim \r from the end of the line. you could trim it from the array variable too ${b[0]//[$'\r\n']}
+
+if [[ -n $errortext ]]; then
+	echo -e "\nErrors encountered:\n$errortext"  | tee -a $log
+	if [[ "$1" != "-n" ]]; then
+		echo Sending alert...  | tee -a $log
+		if [[ -n $ALERT_SCRIPT ]]; then
+			$ALERT_SCRIPT "Backup failure alert" "$errortext" $ALERT_EMAIL
+	        else
+	        	echo -e "$errortext" | /usr/bin/mail -v -s "Backup failure alert" $ALERT_EMAIL
+	        fi
+	fi
+fi
+
+echo "done."  | tee -a $log
