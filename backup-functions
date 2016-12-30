@@ -1,6 +1,14 @@
 #!/bin/bash
 # Backup routines
 # 2016 (c) Alex Ivkin
+#
+# TODO remove hardcoded sudo's from some routines (analyze)
+# Add the strict checking as below.
+#set -euo pipefail
+#IFS=$'\n\t'
+# To counter set -u in valid cases of using unassigned variable. Use default values x=${1:-DEFAULT_VALUE}; e.g var=${1:-} to set var blank if $1 is not set
+# To counter set -e use "|| true" or set +e; command; set -e
+# Add exit traps function finish { blah }; trap finish EXIT; trap finish SIGHUP SIGINT SIGTERM; # for ctrl-c
 
 source "${0%/*}/backup.config" # get backup configuration variables
 
@@ -11,344 +19,346 @@ initBackup() {
     # Perform basic checks before the backup
     # called by most backup functions
     # Options
-    #	- name of the backup set
-    #	- name of the source folder
-    #	- (optional) url of a remote rsyncd
+    #   - name of the backup set
+    #   - name of the source folder
+    #   - (optional) url of a remote rsyncd
     # Results
-    # 	sets "backupset", "log", destURL variables
-    # 	returns error number if short on space or other errors encountered
+    #   sets "backupset", "log", destURL variables
+    #   returns error number if short on space or other errors encountered
     backupset=$1
     log=$DIR/logs/$1.log
     errorlog=$DIR/logs/$1.errors
     destURL=$3
     source=$2
     if [[ ! -d "$DIR/logs/" ]]; then
-    	mkdir "$DIR/logs/";
+        mkdir "$DIR/logs/";
     fi
-    DATE=$(date +%Y-%m-%d.%H-%M-%S)		# date format to use. if you change this make sure the date can be read by 'checkBackupTime()
+    DATE=$(date +%Y-%m-%d.%H-%M-%S)     # date format to use. if you change this make sure the date can be read by 'checkBackupTime()
     echo --------------------------------------------------- >> $log
     if [[ $destURL == "rsync:"* ]]; then  # backing up to remote rsync - use ssh to do remote validation
-    	# security validation - check that the router MAC and the server IP match pre-recoded values over the allowed interface
-	if [[ -z "$(/sbin/ip addr show $IF to $NETMASK)" ]]; then
-    		echo "*** Wrong network: $IF is not on $NETMASK" | tee -a $log
-		echo $DATE 50 $backupset >> $STATUSLOG
-    		return 50
-	fi
-	# fill in the arp cache by pinging once
-	ping -c 1 $ROUTERIP 1>/dev/null
-	if [[ -z "$(arp -a $ROUTERIP | grep $ROUTERMAC)" ]]; then
-    		echo "*** Wrong network: $ROUTERIP router MAC is not $ROUTERMAC" | tee -a $log
-		echo $DATE 51 $backupset >> $STATUSLOG
-    		return 51
-	fi
-	# try the SSH port
-	SERVER=$(sed -e "s/.*@//" -e "s|/.*||" <<< "$destURL")
-	nc -z -w 3 $SERVER 22
-	if [[ $? -ne 0 ]]; then
-    		echo "*** Backup server not reachable." | tee -a $log
-		echo $DATE 52 $backupset >> $STATUSLOG
-    		return 52
-	fi
-	REMOTEDEST=$(ssh -n $SERVER "sed -ne 's/^BACKUPDESTDIR=\([^ ]*\).*/\1/p' $(dirname $STATUSLOG)/backup.config")
-	if [[ -n $REMOTEDEST ]]; then
-		# now do the free space check - first get the backup directory name, then check for space
-		ssh -n $SERVER "grep -qs '$REMOTEDEST' /proc/mounts"
-		if [[ $? -eq 1 ]]; then
-			echo "*** Backup disk $REMOTEDEST is not mounted. Exiting." | tee -a $log
-			echo $DATE 99 $backupset >> $STATUSLOG
-	    		return 99
-		fi
-		# backupdestdir would not be defined when using rsync URL
-    		freespace=$(ssh -n $SERVER "df -m \"$REMOTEDEST\"" | awk "NR==2{print \$4}")
-    		if [[ $freespace -le $MINSPACE ]]; then
-			echo "*** Backup space is running short. Only $freespace MB left on $REMOTEDEST!. Exiting." | tee -a $log
-			echo $DATE 95 $backupset >> $STATUSLOG
-			return 95
-    		fi
-	else
-		echo "*** Can not query remote disk $REMOTEDEST for free space. Exiting." | tee -a $log
-		echo $DATE 53 $backupset >> $STATUSLOG
-    		return 53
-    	fi
-    	BACKUPDESTDIR=$REMOTEDEST # define BACKUPDESTDIR so that remote backups work.
+        # security validation - check that the router MAC and the server IP match pre-recoded values over the allowed interface
+        if [[ -z "$(/sbin/ip addr show $IF to $NETMASK)" ]]; then
+            echo "*** Wrong network: $IF is not on $NETMASK" | tee -a $log
+            echo $DATE 50 $backupset >> $STATUSLOG
+            return 50
+        fi
+        # fill in the arp cache by pinging once
+        ping -c 1 $ROUTERIP 1>/dev/null
+        if [[ -z "$(arp -a $ROUTERIP | grep $ROUTERMAC)" ]]; then
+            echo "*** Wrong network: $ROUTERIP router MAC is not $ROUTERMAC" | tee -a $log
+            echo $DATE 51 $backupset >> $STATUSLOG
+            return 51
+        fi
+        # try the SSH port
+        SERVER=$(sed -e "s/.*@//" -e "s|/.*||" <<< "$destURL")
+        nc -z -w 3 $SERVER 22
+        if [[ $? -ne 0 ]]; then
+            echo "*** Backup server not reachable." | tee -a $log
+            echo $DATE 52 $backupset >> $STATUSLOG
+            return 52
+        fi
+        REMOTEDEST=$(ssh -n $SERVER "sed -ne 's/^BACKUPDESTDIR=\([^ ]*\).*/\1/p' $(dirname $STATUSLOG)/backup.config")
+        if [[ -n $REMOTEDEST ]]; then
+            # now do the free space check - first get the backup directory name, then check for space
+            ssh -n $SERVER "grep -qs '$REMOTEDEST' /proc/mounts"
+            if [[ $? -eq 1 ]]; then
+                echo "*** Backup disk $REMOTEDEST is not mounted. Exiting." | tee -a $log
+                echo $DATE 99 $backupset >> $STATUSLOG
+                return 99
+            fi
+            # backupdestdir would not be defined when using rsync URL
+            freespace=$(ssh -n $SERVER "df -m \"$REMOTEDEST\"" | awk "NR==2{print \$4}")
+            if [[ $freespace -le $MINSPACE ]]; then
+                echo "*** Backup space is running short. Only $freespace MB left on $REMOTEDEST!. Exiting." | tee -a $log
+                echo $DATE 95 $backupset >> $STATUSLOG
+                return 95
+            fi
+        else
+            echo "*** Can not query remote disk $REMOTEDEST for free space. Exiting." | tee -a $log
+            echo $DATE 53 $backupset >> $STATUSLOG
+            return 53
+        fi
+        BACKUPDESTDIR=$REMOTEDEST # define BACKUPDESTDIR so that remote backups work.
     else # do local validation
-	grep -qs "$BACKUPDESTDIR" /proc/mounts
-    	if [[ $? -eq 1 ]]; then
-		echo "*** Backup disk $BACKUPDESTDIR is not mounted. Exiting." | tee -a $log
-		echo $DATE 99 $backupset >> $STATUSLOG
-		return 99
-    	fi
-    	freespace=$(df -m "$BACKUPDESTDIR" | awk "NR==2{print \$4}")
-    	if [[ $freespace -le $MINSPACE ]]; then
-		echo "*** Backup space is running short. Only $freespace MB left on $BACKUPDESTDIR!. Exiting." | tee -a $log
-		echo $DATE 95 $backupset >> $STATUSLOG
-		return 95
-    	fi
-    	if [[ -n "$BACKUPARCHIVE" ]]; then
-    		freespace=$(df -m $BACKUPARCHIVE | awk "NR==2{print \$4}")
-    		if [ $freespace -le $MINSPACE ]; then
-			echo "*** Archived backup space is running short. Only $freespace MB left on $BACKUPARCHIVE!\nArchives will not be shipped out"  | tee -a $log
-    		fi
-    	fi
+        grep -qs "$BACKUPDESTDIR" /proc/mounts
+        if [[ $? -eq 1 ]]; then
+            echo "*** Backup disk $BACKUPDESTDIR is not mounted. Exiting." | tee -a $log
+            echo $DATE 99 $backupset >> $STATUSLOG
+            return 99
+        fi
+        freespace=$(df -m "$BACKUPDESTDIR" | awk "NR==2{print \$4}")
+        if [[ $freespace -le $MINSPACE ]]; then
+            echo "*** Backup space is running short. Only $freespace MB left on $BACKUPDESTDIR!. Exiting." | tee -a $log
+            echo $DATE 95 $backupset >> $STATUSLOG
+            return 95
+        fi
+        # make sure the local backup folder is present (in case of the very first backup)
+        if [[ ! -d "$BACKUPDESTDIR/$backupset/" ]]; then
+            mkdir $BACKUPDESTDIR/$backupset
+        fi
     fi
     return 0
 }
 
 syntheticFullBackup() {
-	# A full backup that uses hardlinks for files that have not changed and only updates these that changed
-	# it has the benefits of the full backup but does not waste space or time backing up files that did not change since the last time
-	# after the successful backup this backup becomes the basis for the next synthetic backup
-	# can backup from a remote systems source = (user@server:~)
-	# can backup to a remote rsync system = rsync://rsyncdealer@server/backup/home
-	# Options
-	#	- source folder
-	#	- name of the backup folder (single the folder name under the backup disk), or a remote server source folder
-	#	- "sudo" for running rsync as root
-	#	- (optional) remote rsync url if backing up to a remote system, e.g. rsync://user@server/backup
-	initBackup $1 "$2" $4
-	if [[ $? -ne 0 ]]; then return; fi
-	echo "*** Starting the $backupset $source backup for $DATE" | tee -a $log
-	if [[ $source != \/* ]] ; then # if source does not start with a slash assume the source is a remote source URL
-		linkdest=$BACKUPDESTDIR/$backupset/${source##*:}	# trim remote url
-	else
-		linkdest=$BACKUPDESTDIR/$backupset$source
-	fi
-	if [[ -n $destURL ]]; then	# backing up to remote rsync
-		opts=(--password-file $DIR/$backupset.secrets)
-		SERVER=$(sed -e "s/.*@//" -e "s|/.*||" <<< "$destURL")
-		# for some reason symbolic links do not work as remote arguments to the --link-dir option so we have to get it unwrapped into the folder it's pointing to
-		LASTBACKUPFULLNAME=$(ssh -n $SERVER "readlink $linkdest")
-		if [[ $? -eq 0 ]]; then
-			opts+=(--link-dest=../$(basename $LASTBACKUPFULLNAME))	# for remote systems it needs to be relative, not absolute, due to the URL addressing scheme
-			#echo "*** Backing up against $LASTBACKUPFULLNAME" | tee -a $log
-		fi
-		destination=$destURL$source.$DATE
-	else
-		destination=$linkdest.$DATE
-		opts=(--link-dest=$linkdest)
-	fi
-	if [[ $3 == "sudo" ]]; then
-		runopt="sudo"
-        else
-        	runopt=""
+    # A full backup that uses hardlinks for files that have not changed and only updates these that changed
+    # it has the benefits of the full backup but does not waste space or time backing up files that did not change since the last time
+    # after the successful backup this backup becomes the basis for the next synthetic backup
+    # can backup from a remote systems source = (user@server:~)
+    # can backup to a remote rsync system = rsync://rsyncdealer@server/backup/home
+    # Options
+    #   - source folder
+    #   - name of the backup folder (single the folder name under the backup disk), or a remote server source folder
+    #   - "sudo" for running rsync as root
+    #   - (optional) remote rsync url if backing up to a remote system, e.g. rsync://user@server/backup
+    initBackup $1 "$2" $4
+    if [[ $? -ne 0 ]]; then return; fi
+    echo "*** Starting the $backupset $source backup for $DATE" | tee -a $log
+    if [[ $source != \/* ]] ; then # if source does not start with a slash assume the source is a remote source URL
+        linkdest=$BACKUPDESTDIR/$backupset/${source%%:*}    # trim remote url to the server name-use that
+    else
+        lastfolder=${source##*/}    # trim to the last folder
+        if [[ -z $lastfolder ]]; then   # for root just use the name of the system
+            lastfolder=$backupset
         fi
-	# using sudo to ensure all user folders are backedup
-	# verbose, archive (-rlptgoD), dont cross file systems and preserve hard links. add -x to not cross file systems
-	echo $runopt rsync -vaH --numeric-ids --exclude-from $DIR/$backupset.exclude --delete --delete-excluded --stats --log-file $log --log-file-format=\"%i %10l %n %L\" --progress --prune-empty-dirs "${opts[@]}" $source/ $destination | tee -a $log
-	$runopt rsync -vaH --numeric-ids --exclude-from $DIR/$backupset.exclude --delete --delete-excluded --stats --log-file $log --log-file-format="%i %10l %n %L" --progress --prune-empty-dirs "${opts[@]}" $source/ $destination 2>$errorlog
+        linkdest=$BACKUPDESTDIR/$backupset/$lastfolder
+    fi
+    if [[ -n $destURL ]]; then  # backing up to remote rsync
+        opts=(--password-file $DIR/$backupset.secrets)
+        SERVER=$(sed -e "s/.*@//" -e "s|/.*||" <<< "$destURL")
+        # for some reason symbolic links do not work as remote arguments to the --link-dir option so we have to get it unwrapped into the folder it's pointing to
+        LASTBACKUPFULLNAME=$(ssh -n $SERVER "readlink $linkdest")
+        if [[ $? -eq 0 ]]; then
+            opts+=(--link-dest=../$(basename $LASTBACKUPFULLNAME))  # for remote systems it needs to be relative, not absolute, due to the URL addressing scheme
+            #echo "*** Backing up against $LASTBACKUPFULLNAME" | tee -a $log
+        fi
+        destination=$destURL$source.$DATE
+    else
+        destination=$linkdest.$DATE
+        opts=(--link-dest=$linkdest)
+    fi
+    if [[ $3 == "sudo" ]]; then
+        runopt="sudo"
+    else
+            runopt=""
+    fi
+    # using sudo to ensure all user folders are backedup
+    # verbose, archive (-rlptgoD), dont cross file systems and preserve hard links. add -x to not cross file systems
+    echo $runopt rsync -vaH --numeric-ids --exclude-from $DIR/$backupset.exclude --delete --delete-excluded --stats --log-file $log --log-file-format=\"%i %10l %n %L\" --progress --prune-empty-dirs "${opts[@]}" $source/ $destination | tee -a $log
+    $runopt rsync -vaH --numeric-ids --exclude-from $DIR/$backupset.exclude --delete --delete-excluded --stats --log-file $log --log-file-format="%i %10l %n %L" --progress --prune-empty-dirs "${opts[@]}" $source/ $destination 2>$errorlog
 
-	if [[ ($? -eq 0) || ($? -eq 24) ]]; then
-		#  24     Partial transfer due to vanished source files
-		echo "*** $backupset $source backup for $DATE successful" | tee -a $log
-		# need to do an absolute soft link because:
-		# 1. rsync can't use relative links for it's hardlink destination - it gives a rather non descriptive error  "cgrp ... failed: Operation not permitted (1)" error
-		# this is because rsyncd (the server side) need permissions to set group ownership to match that of the parent folder. you could change rsyncd to run as root to make it go away
-		# 2. some further backups to remote systems, like TSM can't work with relative links
-		if [[ -n $destURL ]]; then	# backing up to remote rsync
-			ssh -n $SERVER "ln -snf $linkdest.$DATE $linkdest; echo $DATE 0 $backupset >> $STATUSLOG"
-		else
-			ln -snf $linkdest.$DATE $linkdest
-		fi
-		echo $DATE 0 $backupset >> $STATUSLOG
-	else
-		error=$?
-		echo "*** $backupset $source backup for $DATE finished with $error" | tee -a $log
-		echo "Errors collected during the last run from stderr:" | tee -a $log
-		cat $errorlog | tee -a $log
-		if [[ -n $destURL ]]; then	# backing up to remote rsync
-			ssh -n $SERVER "mv $linkdest.$DATE $linkdest.$DATE.partial; echo $DATE $error $backupset >> $STATUSLOG"
-		else
-			mv $linkdest.$DATE $linkdest.$DATE.partial
-		fi
-		echo $DATE $error $backupset >> $STATUSLOG
-	fi
+    if [[ ($? -eq 0) || ($? -eq 24) ]]; then
+        #  24     Partial transfer due to vanished source files
+        echo "*** $backupset $source backup for $DATE successful" | tee -a $log
+        # need to do an absolute soft link because:
+        # 1. rsync can't use relative links for it's hardlink destination - it gives a rather non descriptive error  "cgrp ... failed: Operation not permitted (1)" error
+        # this is because rsyncd (the server side) need permissions to set group ownership to match that of the parent folder. you could change rsyncd to run as root to make it go away
+        # 2. some further backups to remote systems, like TSM can't work with relative links
+        if [[ -n $destURL ]]; then  # backing up to remote rsync
+            ssh -n $SERVER "ln -snf $linkdest.$DATE $linkdest; echo $DATE 0 $backupset >> $STATUSLOG"
+        else
+            ln -snf $linkdest.$DATE $linkdest
+        fi
+        echo $DATE 0 $backupset >> $STATUSLOG
+    else
+        error=$?
+        echo "*** $backupset $source backup for $DATE finished with $error" | tee -a $log
+        echo "Errors collected during the last run from stderr:" | tee -a $log
+        cat $errorlog | tee -a $log
+        if [[ -n $destURL ]]; then  # backing up to remote rsync
+            ssh -n $SERVER "mv $linkdest.$DATE $linkdest.$DATE.partial; echo $DATE $error $backupset >> $STATUSLOG"
+        else
+            mv $linkdest.$DATE $linkdest.$DATE.partial
+        fi
+        echo $DATE $error $backupset >> $STATUSLOG
+    fi
 }
 
 fullBackup(){
-	# full backup with rsync
-	# options
-	#	- source folder to backup
-	#	- folder location to backup to
-	#	- "keep" option to have all changed or deleted files moved into a secondary backup folder
-	#	- (optional) remote rsync URL, e.g. rsync://user@server/backup
-	initBackup $1 "$2" $4
-	if [[ $? -ne 0 ]]; then return; fi
-	if [[ $3 == "keep" ]]; then
-  		# using array because a space inside args should be passed the same as the space separating the args
-  		# --copy-links is so that linked folder, outside of the main source location are copied by following the symlink
-		opts=(--copy-links --backup --backup-dir "$BACKUPDESTDIR/$backupset.backups")
-		if [[ -f "$DIR/$backupset.exclude" ]]; then # add exclusions if present
-			opts+=(--exclude-from "$DIR/$backupset.exclude")
-		fi
-	else
-		opts=(--delete-excluded --include-from "$DIR/$backupset.include" --exclude-from "$DIR/$backupset.exclude")
-	fi
-	if [[ -n $destURL ]]; then	# backing up to remote rsync
-		opts+=(--password-file $DIR/$backupset.secrets)
-		SERVER=$(sed -e "s/.*@//" -e "s|/.*||" <<< "$destURL")
-		destination=$destURL
-	else
-		destination=$BACKUPDESTDIR/$backupset
-	fi
-	echo "*** Starting full backup for $backupset on $DATE" | tee -a "$log"
-	# use file system level rsync with advanced error handling
-	echo sudo rsync -va --delete --stats --log-file \"$log\" --log-file-format=\"%i %10l %n %L\" --progress "${opts[@]}" \"$source\" \"$destination\" | tee -a $log
-	sudo rsync -va --delete --stats --log-file "$log" --log-file-format="%i %10l %n %L" --progress "${opts[@]}" "$source" "$destination" 2>"$errorlog"
-	if [[ ($? -eq 0) || ($? -eq 24) ]]; then
-		#  24     Partial transfer due to vanished source files - could happen due to a backup of a live system
-		echo "*** Full backup for $backupset on $DATE successful" | tee -a "$log"
-		if [[ -n $destURL ]]; then	# backing up to remote rsync
-			ssh -n $SERVER "echo $DATE 0 $backupset >>$STATUSLOG"
-		fi
-		echo $DATE 0 $backupset >>$STATUSLOG
-	else
-		error=$?
-		echo "*** Full backup for $backupset on $DATE finished with error $error" | tee -a "$log"
-		echo "Errors collected during the last run from stderr:" | tee -a "$log"
-		cat "$errorlog" | tee -a "$log"
-		if [[ -n $destURL ]]; then	# backing up to remote rsync
-			ssh -n $SERVER "echo $DATE $error $backupset >> $STATUSLOG"
-		fi
-		echo $DATE $error $backupset >> $STATUSLOG
-	fi
+    # full backup with rsync
+    # options
+    #   - source folder to backup
+    #   - folder location to backup to
+    #   - "keep" option to have all changed or deleted files moved into a secondary backup folder
+    #   - (optional) remote rsync URL, e.g. rsync://user@server/backup
+    initBackup $1 "$2" $4
+    if [[ $? -ne 0 ]]; then return; fi
+    if [[ $3 == "keep" ]]; then
+        # using array because a space inside args should be passed the same as the space separating the args
+        # --copy-links is so that linked folder, outside of the main source location are copied by following the symlink
+        opts=(--copy-links --backup --backup-dir "$BACKUPDESTDIR/$backupset.backups")
+        if [[ -f "$DIR/$backupset.exclude" ]]; then # add exclusions if present
+            opts+=(--exclude-from "$DIR/$backupset.exclude")
+        fi
+    else
+        opts=(--delete-excluded --include-from "$DIR/$backupset.include" --exclude-from "$DIR/$backupset.exclude")
+    fi
+    if [[ -n $destURL ]]; then  # backing up to remote rsync
+        opts+=(--password-file $DIR/$backupset.secrets)
+        SERVER=$(sed -e "s/.*@//" -e "s|/.*||" <<< "$destURL")
+        destination=$destURL
+    else
+        destination=$BACKUPDESTDIR/$backupset
+    fi
+    echo "*** Starting full backup for $backupset on $DATE" | tee -a "$log"
+    # use file system level rsync with advanced error handling
+    echo sudo rsync -va --delete --stats --log-file \"$log\" --log-file-format=\"%i %10l %n %L\" --progress "${opts[@]}" \"$source\" \"$destination\" | tee -a $log
+    sudo rsync -va --delete --stats --log-file "$log" --log-file-format="%i %10l %n %L" --progress "${opts[@]}" "$source" "$destination" 2>"$errorlog"
+    if [[ ($? -eq 0) || ($? -eq 24) ]]; then
+        #  24     Partial transfer due to vanished source files - could happen due to a backup of a live system
+        echo "*** Full backup for $backupset on $DATE successful" | tee -a "$log"
+        if [[ -n $destURL ]]; then  # backing up to remote rsync
+            ssh -n $SERVER "echo $DATE 0 $backupset >>$STATUSLOG"
+        fi
+        echo $DATE 0 $backupset >>$STATUSLOG
+    else
+        error=$?
+        echo "*** Full backup for $backupset on $DATE finished with error $error" | tee -a "$log"
+        echo "Errors collected during the last run from stderr:" | tee -a "$log"
+        cat "$errorlog" | tee -a "$log"
+        if [[ -n $destURL ]]; then  # backing up to remote rsync
+            ssh -n $SERVER "echo $DATE $error $backupset >> $STATUSLOG"
+        fi
+        echo $DATE $error $backupset >> $STATUSLOG
+    fi
 }
 
 folderBackup() {
-	# tar up a folder
-	#
-	initBackup $1 "$2"
-	if [[ $? -ne 0 ]]; then return; fi
-	dest=$BACKUPDESTDIR/$backupset/$(basename $source).tar.gz
-	echo "*** Starting folder back up of $source to $dest on $DATE" | tee -a "$log"
-	tar cpzf "$dest" "$source" 1>>"$DIR/$backupset.log" 2>"$errorlog"
-	if [[ $? -eq 0 ]]; then
-		echo "*** Folder backup of $source to $dest on $DATE successful" | tee -a "$log"
-		echo $DATE 0 $backupset >>$STATUSLOG
-	else
-		error=$?
-		echo "*** Folder backup of $source to $dest on $DATE finished with error $error" | tee -a "$log"
-		echo $DATE $error $backupset >> $STATUSLOG
-		echo "Errors collected during the last run from stderr:" | tee -a "$log"
-		cat "$errorlog" | tee -a "$log"
-	fi
+    # tar up a folder
+    #
+    initBackup $1 "$2"
+    if [[ $? -ne 0 ]]; then return; fi
+    dest=$BACKUPDESTDIR/$backupset/$(basename $source).tar.gz
+    echo "*** Starting folder back up of $source to $dest on $DATE" | tee -a "$log"
+    tar cpzf "$dest" "$source" 1>>"$DIR/$backupset.log" 2>"$errorlog"
+    if [[ $? -eq 0 ]]; then
+        echo "*** Folder backup of $source to $dest on $DATE successful" | tee -a "$log"
+        echo $DATE 0 $backupset >>$STATUSLOG
+    else
+        error=$?
+        echo "*** Folder backup of $source to $dest on $DATE finished with error $error" | tee -a "$log"
+        echo $DATE $error $backupset >> $STATUSLOG
+        echo "Errors collected during the last run from stderr:" | tee -a "$log"
+        cat "$errorlog" | tee -a "$log"
+    fi
 }
 
 configurationBackup(){
-	# backup system configuration
-	# option
-	# 	- folder under the BACKUPDESTDIR that contains system configs
-	#	- remote location or list of folders to create a list of subfolders
-	# needs sudo
-	initBackup $1 - $2
-	if [[ $? -ne 0 ]]; then return; fi
-	system=$(hostname)
-	tempdir=$(mktemp -d --tmpdir="$DIR")
-	configlog=$tempdir/$system-$DATE.log
-	archive=$system-$DATE.tar.gz
-	echo "*** Starting configuration backup for $system on $DATE" | tee -a $log
-	echo -e "\n::: Open ports\n" >> $configlog
-	sudo ufw status >> $configlog
-	echo -e "\n::: Installed packages\n" >>$configlog
-	dpkg -l >> $configlog
-	echo -e "\n::: User crontab\n" >>$configlog
-	crontab -l >> $configlog 2>/dev/null
-	shift
-	# export list of files/folders to log files
-	filelogs=(${configlog#$tempdir/}) # start with the config log we just created, trim the unecessary folder structure
-	destURL="" # we'll try to find the rsync mixed in with the options
-	for var in "$@"; do
-		if [[ $var == "rsync:"* ]]; then # a remote backup option
-			destURL=$var
-			continue
-		fi
-		filelist="$tempdir/$system${var//\//-}-$DATE.log" # replace slashes with dashes
-		find "$var" -type f >$filelist 2>/dev/null
-		filelogs+=( ${filelist#$tempdir/} ) # save the trimmed log name into an array
-	done
-	cd $tempdir/
-	# zip it all up
-	tar zcf $archive ${filelogs[@]} 2>>$errorlog
-	if [[ $? -eq 0 ]]; then
-		if [[ -n $destURL ]]; then
-			rsync -va --log-file "$log" --log-file-format="%i %10l %n %L" --password-file $DIR/$backupset.secrets $archive $destURL 2>>"$errorlog"
-		else
-			cp $archive $BACKUPDESTDIR/$backupset/
-		fi
-	fi
-	if [[ $? -eq 0 ]]; then
-		#  24     Partial transfer due to vanished source files - could happen due to a backup of a live system
-		echo "*** Configuration backup for $system on $DATE successful" | tee -a "$log"
-		if [[ -n $destURL ]]; then	# backing up to remote rsync
-			ssh -n $SERVER "echo $DATE 0 $backupset >>$STATUSLOG"
-		fi
-		echo $DATE 0 $backupset >>$STATUSLOG
-		rm ${filelogs[@]}
-		rm $archive
-		rmdir $tempdir
-	else
-		error=$?
-		echo "*** Configuration backup for $backupset on $DATE finished with error $error" | tee -a "$log"
-		if [[ -n $destURL ]]; then	# backing up to remote rsync
-			ssh -n $SERVER "echo $DATE $error $backupset >> $STATUSLOG"
-		fi
-		echo $DATE $error $backupset >> $STATUSLOG
-		echo "Errors collected during the last run from stderr:" | tee -a "$log"
-		cat "$errorlog" | tee -a "$log"
-	fi
-	#popd
+    # backup system configuration
+    # option
+    #   - folder under the BACKUPDESTDIR that contains system configs
+    #   - remote location or list of folders to create a list of subfolders
+    # needs sudo
+    initBackup $1 - $2
+    if [[ $? -ne 0 ]]; then return; fi
+    system=$(hostname)
+    tempdir=$(mktemp -d --tmpdir="$DIR")
+    configlog=$tempdir/$system-$DATE.log
+    archive=$system-$DATE.tar.gz
+    echo "*** Starting configuration backup for $system on $DATE" | tee -a $log
+    echo -e "\n::: Open ports\n" >> $configlog
+    sudo ufw status >> $configlog
+    echo -e "\n::: Installed packages\n" >>$configlog
+    dpkg -l >> $configlog
+    echo -e "\n::: User crontab\n" >>$configlog
+    crontab -l >> $configlog 2>/dev/null
+    shift
+    # export list of files/folders to log files
+    filelogs=(${configlog#$tempdir/}) # start with the config log we just created, trim the unecessary folder structure
+    destURL="" # we'll try to find the rsync mixed in with the options
+    for var in "$@"; do
+        if [[ $var == "rsync:"* ]]; then # a remote backup option
+            destURL=$var
+            continue
+        fi
+        filelist="$tempdir/$system${var//\//-}-$DATE.log" # replace slashes with dashes
+        find "$var" -type f >$filelist 2>/dev/null
+        filelogs+=( ${filelist#$tempdir/} ) # save the trimmed log name into an array
+    done
+    cd $tempdir/
+    # zip it all up
+    tar zcf $archive ${filelogs[@]} 2>>$errorlog
+    if [[ $? -eq 0 ]]; then
+        if [[ -n $destURL ]]; then
+            rsync -va --log-file "$log" --log-file-format="%i %10l %n %L" --password-file $DIR/$backupset.secrets $archive $destURL 2>>"$errorlog"
+        else
+            cp $archive $BACKUPDESTDIR/$backupset/
+        fi
+    fi
+    if [[ $? -eq 0 ]]; then
+        #  24     Partial transfer due to vanished source files - could happen due to a backup of a live system
+        echo "*** Configuration backup for $system on $DATE successful" | tee -a "$log"
+        if [[ -n $destURL ]]; then  # backing up to remote rsync
+            ssh -n $SERVER "echo $DATE 0 $backupset >>$STATUSLOG"
+        fi
+        echo $DATE 0 $backupset >>$STATUSLOG
+        rm ${filelogs[@]}
+        rm $archive
+        rmdir $tempdir
+    else
+        error=$?
+        echo "*** Configuration backup for $backupset on $DATE finished with error $error" | tee -a "$log"
+        if [[ -n $destURL ]]; then  # backing up to remote rsync
+            ssh -n $SERVER "echo $DATE $error $backupset >> $STATUSLOG"
+        fi
+        echo $DATE $error $backupset >> $STATUSLOG
+        echo "Errors collected during the last run from stderr:" | tee -a "$log"
+        cat "$errorlog" | tee -a "$log"
+    fi
+    #popd
 }
 
 tsmBackup() {
-	# backup to a TSM server
-	#log=$DIR/$SERVER.log
-	initBackup $1
-	if [[ $? -ne 0 ]]; then return; fi
-	USER=$2
-	SERVER=$1
-	SSH_PORT=$3
-	echo "*** Starting TSM backup to $SERVER for $DATE" | tee -a $log
-	# connection test: nc -z -w 3 localhost 1800 if [[ $? -ne 0 ]]; then
-	neednewtunnel=true
-	if [[ -e $SSH_CONTROL_SOCKET ]]; then # if control socket is there
-		# check if it is alive
-		ssh -O check -S $CONTROLSOCK localhost > /dev/null
-		if [[ $? -eq 0 ]]; then
-			echo "*** The ssh tunnel is already present." | tee -a $log
-			neednewtunnel=false
-		else
-			# delete misbehaving socket
-			rm $CONTROLSOCK
-		fi
-	fi
-	if [[ $neednewtunnel == true ]]; then
-		echo "*** Setting up the SSH to $SERVER:$SSH_PORT" | tee -a $log
-		ssh -fNM -S $SSH_CONTROL_SOCKET -L 1800:localhost:1500 -p $SSH_PORT $USER@$SERVER
-		if [[ $? -ne 0 ]]; then
-			echo "*** SSH tunneling failed. Sending a server wake-up command, and waiting 30 seconds..." | tee -a $log
-			wakeonlan -i $SERVER 00:23:54:25:8E:FA
-			sleep 30
-			echo "*** Retrying SSH tunnel setup ..." | tee -a $log
-			ssh -fNM -S $SSH_CONTROL_SOCKET -L 1800:localhost:1500 -p $SSH_PORT $USER@$SERVER
-			if [[ $? -ne 0 ]]; then
-				echo "*** SSH tunneling failed!" | tee -a $log
-				echo $DATE 9 $SERVER >> $STATUSLOG
-				return 9
-			fi
-		fi
-	fi
-	# may need SHELL=/bin/bash and LANG=en_US.UTF-8
-	echo Backup started. Please check $log for progress. Long running 'tee' fails when executed from cron hence it can not be used here.
-	sudo /usr/bin/nice -n 19 /opt/tivoli/tsm/client/ba/bin/dsmc inc >> $log 2>&1
-	if [[ $? -eq 0 ]]; then
-		echo "*** $SERVER backup for $DATE successful" | tee -a $log
-		echo $DATE 0 $SERVER  >> $STATUSLOG
-	else
-		error=$?
-		echo "*** $SERVER backup for $DATE finished with $error" | tee -a $log
-		echo $DATE $error $SERVER >> $STATUSLOG
-	fi
-	# terminate the tunnel
-	ssh -O exit -S $SSH_CONTROL_SOCKET localhost > /dev/null
+    # backup to a TSM server
+    #log=$DIR/$SERVER.log
+    initBackup $1
+    if [[ $? -ne 0 ]]; then return; fi
+    USER=$2
+    SERVER=$1
+    SSH_PORT=$3
+    echo "*** Starting TSM backup to $SERVER for $DATE" | tee -a $log
+    # connection test: nc -z -w 3 localhost 1800 if [[ $? -ne 0 ]]; then
+    neednewtunnel=true
+    if [[ -e $SSH_CONTROL_SOCKET ]]; then # if control socket is there
+        # check if it is alive
+        ssh -O check -S $CONTROLSOCK localhost > /dev/null
+        if [[ $? -eq 0 ]]; then
+            echo "*** The ssh tunnel is already present." | tee -a $log
+            neednewtunnel=false
+        else
+            # delete misbehaving socket
+            rm $CONTROLSOCK
+        fi
+    fi
+    if [[ $neednewtunnel == true ]]; then
+        echo "*** Setting up the SSH to $SERVER:$SSH_PORT" | tee -a $log
+        ssh -fNM -S $SSH_CONTROL_SOCKET -L 1800:localhost:1500 -p $SSH_PORT $USER@$SERVER
+        if [[ $? -ne 0 ]]; then
+            echo "*** SSH tunneling failed. Sending a server wake-up command, and waiting 30 seconds..." | tee -a $log
+            wakeonlan -i $SERVER 00:23:54:25:8E:FA
+            sleep 30
+            echo "*** Retrying SSH tunnel setup ..." | tee -a $log
+            ssh -fNM -S $SSH_CONTROL_SOCKET -L 1800:localhost:1500 -p $SSH_PORT $USER@$SERVER
+            if [[ $? -ne 0 ]]; then
+                echo "*** SSH tunneling failed!" | tee -a $log
+                echo $DATE 9 $SERVER >> $STATUSLOG
+                return 9
+            fi
+        fi
+    fi
+    # may need SHELL=/bin/bash and LANG=en_US.UTF-8
+    echo Backup started. Please check $log for progress. Long running 'tee' fails when executed from cron hence it can not be used here.
+    sudo /usr/bin/nice -n 19 /opt/tivoli/tsm/client/ba/bin/dsmc inc >> $log 2>&1
+    if [[ $? -eq 0 ]]; then
+        echo "*** $SERVER backup for $DATE successful" | tee -a $log
+        echo $DATE 0 $SERVER  >> $STATUSLOG
+    else
+        error=$?
+        echo "*** $SERVER backup for $DATE finished with $error" | tee -a $log
+        echo $DATE $error $SERVER >> $STATUSLOG
+    fi
+    # terminate the tunnel
+    ssh -O exit -S $SSH_CONTROL_SOCKET localhost > /dev/null
 }
 
 
@@ -378,281 +388,382 @@ checkBackupTime (){
     # check if the backups completed successfuly within the past N days
     # this function returns error string by printing it to stdout, NO OTHER echos are allowed
     # options
-    #	- backup name
-    # 	- number of days allowed (not to exceed)
-    #	- remote rsync URL if the backup is to a remote rsync
+    #   - backup name
+    #   - number of days allowed (not to exceed)
+    #   - remote rsync URL if the backup is to a remote rsync
     # return
-    #	- nothing if within the allowed range
-    #	- error string
+    #   - nothing if within the allowed range
+    #   - error string
     backupset=$1
     daycount=$2
     shift
     shift
     SERVER=""
     for var in "$@"; do # extract server name from the paramteters to detect if we are doing backup to a remote server
-    	#if [[ $var =~ .*@.*\/.* ]]; then
-    	if [[ $var == rsync:* ]]; then
-		SERVER=$(sed -e "s/.*@//" -e "s|/.*||" <<< "$var")
-		backup_status_log=$(ssh -n $SERVER "cat $STATUSLOG" )     # SSH may eat up stdio, use -n to avoid this. Could also do < /dev/null
-		#echo -e $backup_status_log >&2
-		break
-	fi
+        #if [[ $var =~ .*@.*\/.* ]]; then
+        if [[ $var == rsync:* ]]; then
+            SERVER=$(sed -e "s/.*@//" -e "s|/.*||" <<< "$var")
+            backup_status_log=$(ssh -n $SERVER "cat $STATUSLOG" )     # SSH may eat up stdio, use -n to avoid this. Could also do < /dev/null
+            #echo -e $backup_status_log >&2
+            break
+        fi
     done
     if [[ -z $SERVER ]]; then #grab locally
-	backup_status_log="$(cat $STATUSLOG)"
+        backup_status_log="$(cat $STATUSLOG)"
     fi
     if [[ -z $backup_status_log ]]; then echo "No record of $backupset"; return; fi
     lastsuccessraw=$(grep -P "0 $backupset(\s|\r?$)" <<< "$backup_status_log" | tr '\r' ' ' | awk "END{print \$1}") # matches a success, ignoring anything past name of the backup. Matches dos and unix end of lines. tr is to remove effects of \r on the output printout (blanking out line on print)
     # You can use comments on the same line or on another line
-    lastsuccess=$(echo $lastsuccessraw | tr . ' ' | awk '{gsub("-",":",$2); print}') # makes the date from the log readable by the 'date' command
-    if [ -z "$lastsuccess" ]; then
-        lastsuccess="1979-06-06 01:01:01" # Never seen a successful backup
-    fi
-    # echo $backupset $lastsuccess >&2
-    if [ $(dateDiff -d "now" $lastsuccess) -gt $daycount ]; then
-        #issuetext=$issuetext"Last successful backup of $backupset happened on $lastsuccess, more than $2 days ago\n"
-        echo "* Last successful backup of $backupset happened on $lastsuccess, more than $daycount day(s) ago"
-	#if [ -n "$3" ]; then
-	#	# todo grab appropriate parts of a multi-part backup that feeds into the same log
-	#	issuetext=$issuetext"Tail of the log:\n\n"$(tail ~/bin/$3)"\n"
-	if [[ -s $DIR/logs/$backupset.log ]]; then # if file exists and not empty
-		echo "Log: $(tail -n 1 $DIR/logs/$backupset.log)"
-	fi
-	if [[ -s $DIR/logs/$backupset.errors ]]; then
-		echo "Error Log:\n$(tail -n 1 $DIR/logs/$backupset.errors)"
-	fi
-	echo "\n"
-	#issueflag=1
+        lastsuccess=$(echo $lastsuccessraw | tr . ' ' | awk '{gsub("-",":",$2); print}') # makes the date from the log readable by the 'date' command
+        if [ -z "$lastsuccess" ]; then
+            lastsuccess="1979-06-06 01:01:01" # Never seen a successful backup
+        fi
+        # echo $backupset $lastsuccess >&2
+        if [ $(dateDiff -d "now" $lastsuccess) -gt $daycount ]; then
+            #issuetext=$issuetext"Last successful backup of $backupset happened on $lastsuccess, more than $2 days ago\n"
+            echo "* Last successful backup of $backupset happened on $lastsuccess, more than $daycount day(s) ago"
+        #if [ -n "$3" ]; then
+        #   # todo grab appropriate parts of a multi-part backup that feeds into the same log
+        #   issuetext=$issuetext"Tail of the log:\n\n"$(tail ~/bin/$3)"\n"
+        if [[ -s $DIR/logs/$backupset.log ]]; then # if file exists and not empty
+            echo "Log: $(tail -n 1 $DIR/logs/$backupset.log)"
+        fi
+        if [[ -s $DIR/logs/$backupset.errors ]]; then
+            echo "Error Log:\n$(tail -n 1 $DIR/logs/$backupset.errors)"
+        fi
+        echo "\n"
+        #issueflag=1
     else
-	#echo "Last successful backup of $backupset happened on $lastsuccess, less than $2 days ago. All good." # | tee -a ~/bin/backup-launcher.log
-	true
+    #echo "Last successful backup of $backupset happened on $lastsuccess, less than $2 days ago. All good." # | tee -a ~/bin/backup-launcher.log
+        true
     fi
 }
 
 analyzeBackup() {
-	# Find and report the number of files and the size contained in each synthetic backup
-	# both complete and unique contents
-	# usefull in figuring out which backups to keep and which to get rid of
-	# "Repeat uniques" are files that show up as unique contents across multiple backups. Backups with files that are latter superseeded can be deleted with less risk of losing crutial data
-	# $1 is the folder with the backups
-	#TK_USE_CURRENT_LOCALE=1 may be necessary to display thousands separator
-	backupcounter=0
-	declare -A filehash	# bash 4 associative array to track globally unique files (across all backups). -A allows the use of strings as keys (associative array, aka hash, aka dictionary)
-	declare -a backupdirlist
-	# fill a regular array because we rely on the order of files in the list
-	backupdirlist=($1*) # lack of / between $1 and * is on purpose, so it can work on different directory levels (same level or a subdirectory)
-	logfilelength=$(grep $1 $BACKUP_RATINGS | wc -l )
-	if [[ $logfilelength -gt 1 ]]; then # this means we have existing data to take into account
-		# exclude whatever's already in the log files
-		j=0
-		for i in "${backupdirlist[@]}" ; do
-			#echo checking $i
-			if grep -q $i $BACKUP_RATINGS; then
-				#echo found $i removing from the list
-				lastknownbackup=$i # keeping track of the last removed entry
-				unset backupdirlist[$j] # remove by index (this works even while we are iterating the array because of bash's copy-on-read)
-			fi
-			((j++)) # track index because we are dealing with an array
-		done
-		if [[ ${#backupdirlist[@]} -eq 0 ]]; then
-			echo $1: Nothing to do.
-			return
-		fi
-		# if this is an update to the already known information then the last existing backup becomes the first reference backup for the update (our backups are full incrementals)
-		# force rescanning of the last backup, so the next one shows ups as a continuation. Insert as the first element
-		backupdirlist=("$lastknownbackup" "${backupdirlist[@]}")
-	fi
-	#lastbackup=${backupdirlist[$(( ${#backupdirlist[*]} - 1 ))]}
-	#echo resulting list: ${backupdirlist[@]}
-	#return
-	#echo $firstbackup $lastbackup
-	for i in "${backupdirlist[@]}" ; do
-		if [[ -L "$i" && -d "$i" ]]; then
-		    continue # $i is a symlink to a directory
-		fi
-		echo -n "Examining $i..."
-		((backupcounter++))
-		totalcount=0
-		totalsize=0
-		uniquecount=0
-		uniquesize=0
-		start=`date +%s`
-		unset backuphash # clear list of files in this backup
-		declare -A backuphash #contains files unque to this backup
-		#oldIFS="$IFS"
-		while IFS= read -d '' -r file; do # IFS= removes default line splits on \n, allowing \n in files
-		#for file in $(sudo find $i -type f -printf "%s-%n\n"); do # this loop is possible because there are no spaces in the printf. It's slower than the forked while
-			# echo -e $file
-			IFS=$'\777' read -d '' -r name size ncount <<<"$file"
-			#IFS="$oldIFS"
-			#size=${file%-*}
-			((totalsize+=size))
-			((totalcount++))
-			#backuphash["$name"]=$ncount
-			#if [ ${file#*-} -eq 1 ]; then
-
-			if [ -z $ncount ]; then # error checking
-				echo "Error - $file=$name-$size-$ncount"
-				exit
-		        fi
-			if [ $ncount -eq 1 ]; then
-				((uniquesize+=size))
-				((uniquecount++))
-				# trim the backup name from the file name
-				shortname=${name#$i/} # remove the backup name
-				((filehash['$shortname']++)) # count the number of times the file shows up with one hardlink, i.e. how often file occurs in backups as unique
-				backuphash["$shortname"]=$size
-				#echo $shortname=${filehash[$shortname]}
-				#echo ${!filehash[@]}
-				#exit
-			fi
-		#done
-		done < <(sudo find $i -type f -printf "%p\777%s\777%n\0")	# file name, size in bytes and number of hardlinks. can not use %f instead of %p because we need the folder. Using oct 777 aka hex 1FF as a separator. Although it COULD appear in a name / and \0 are the only disallowed character in ext4 file name. / is in paths though
-		#echo ${#filehash[@]}
-		if [[ $totalcount -eq 0 || $totalsize -eq 0 ]]; then
-			echo "Empty backup (no files at all)"
-			printf "%'6dMB/%'6dMB (%5.2f%%)\t%'8d/%'8d (%5.2f%%)\t$i\n" 0 0 0 0 0 0 >> $BACKUP_USAGE
-       			printf "*** %s -  0%% total content. No files\n" $i >> $BACKUP_RATINGS
-			continue
-		fi
-		echo -n "reviewing ..." # ${#filehash[@]}..."
-		# reduce the "uniquiness" factor if the file is marked as unique, but it has already appeared as unique in backups before this one.
-		# I.e. it's a file that changes often and is backed up often, therefore less important to keep around
-		repeatcount=0
-		for k in "${!backuphash[@]}" ; do
-			if [[ ${filehash[$k]} -gt 1 ]]; then # no need to check if k is in file hash - a unique to this backup file will be in the globally unique list by definition
-				((repeatcount++))
-			fi
-		done
-		# calc the exclusivity heuristic. here it's only backward looking (filehash accumulates per backup seen so far), therefore the first backup is always 100% exclusive
-		if [[ -z "$lastknownbackup" || $i != $lastknownbackup ]]; then # we dont need to report on the first backup for updates - it's already there, because our first backup is the last recorded backup
-			# To make the exclusivity heuristic global you need to take the followin code outside of this loop, and build another loop like the one you are in
-         		if [[ $uniquecount -ne 0 ]]; then
-         			uniquerating=$(echo "scale=2; 100*(1-$repeatcount/$uniquecount)"|bc -l)
-         			printf "*** %s - %3.0f%% exclusive content (%d changed files, %d repeat changes)\n" $i $uniquerating $uniquecount $repeatcount >> $BACKUP_RATINGS
-         			# save the unique content - note that this skips the first and the last backup. They will always be not deleted, have most unique content (which causes sort to talk every long time) and mostly irrelevant.
-                		echo "*** Unique files in $i" >> $BACKUP_CONTENTS
-                		for k in "${!backuphash[@]}" ; do
-                			printf "%'6dMB %s\n" $(echo "scale=0;${backuphash[$k]}/1048576"|bc -l) "$k"
-                		#sudo find $i -links 1 -printf "%s\t%p\n" >> $BACKUP_RATINGS
-                		done | sort -rn >> $BACKUP_CONTENTS # sorting takes looooong time for big file counts (>10k)
-         		else
-         			printf "*** %s -   0%% exclusive content. No changed files\n" $i >> $BACKUP_RATINGS
-         		fi
-  		fi
-
-		end=`date +%s`
-		echo -n "took $((end-start)) seconds. "
-
-		fileper=$(echo "scale=2; 100*$uniquecount/$totalcount"|bc -l) # using bc because bash does not do float
-		sizeper=$(echo "scale=2; 100*$uniquesize/$totalsize"|bc -l) # using bc because bash does not do float
-		printf "Total: %'dMB in %'d files. Changes: %'dMB ($sizeper%%) in %'d files ($fileper%%)\n" $(echo "scale=0;$totalsize/1048576"|bc -l) $totalcount $(echo "scale=0;$uniquesize/1048576"|bc -l) $uniquecount
-		printf "%'6dMB/%'6dMB (%5.2f%%)\t%'8d/%'8d (%5.2f%%)\t$i\n" $(echo "scale=0;$uniquesize/1048576"|bc -l) $(echo "scale=0;$totalsize/1048576"|bc -l) $sizeper $uniquecount $totalcount $fileper >> $BACKUP_USAGE
-		#if [[ $backupcounter -eq 4 ]]; then break; fi
-	done
-
-	# echo "*** Files that change between each backup in $1" >> $TRANSLOG
-	#echo ${filehash[@]}
-	# for k in "${!filehash[@]}" ; do
-	#	if [[ ${filehash[$k]} -eq $backupcounter ]]; then
-	#		#echo $k = ${filehash[$k]} >> $TRANSLOG
-	#		echo $k >> $TRANSLOG
-	#	fi
-	#done
-	#echo "*** File occurence for $1 ($backupcounter backups total)" >> $BACKUP_CONTENTS
-	#for k in "${!filehash[@]}" ; do
-	#	printf "%8d - %s\n" ${filehash[$k]} "$k"
-	#done | sort -rn >> $BACKUP_CONTENTS
+    # Find and report the number of files and the size contained in each synthetic backup
+    # both complete and unique contents
+    # usefull in figuring out which backups to keep and which to get rid of
+    # "Repeat uniques" are files that show up as unique contents across multiple backups. Backups with files that are latter superseeded can be deleted with less risk of losing crutial data
+    # $1 is the folder with the backups
+    #TK_USE_CURRENT_LOCALE=1 may be necessary to display thousands separator
+    backupcounter=0
+    totalspace=0 # total space used by all backups in this backup set. for no it just counts space used by unique files, not all files  (i.e. its not the same as du -sh .)
+    declare -A filehash # bash 4 associative array to track globally unique files (across all backups). -A allows the use of strings as keys (associative array, aka hash, aka dictionary)
+    declare -A filespace # bash 4 associative array to track disk space used by globally unique files
+    declare -a backupdirlist # a list (array) of backups under the current folder
+    # fill a regular array because we rely on the order of files in the list
+    backupdirlist=($1*) # Fill the array with all subfolders. lack of / between $1 and * is on purpose, so it can work on different directory levels (same level or a subdirectory)
+    logfilelength=$(grep $1 $BACKUP_RATINGS | wc -l )
+    if [[ $logfilelength -ge 1 ]]; then # this means we have existing data to take into account
+        # exclude folders that are already in the log files (we do not need to re-analyze them)
+        j=0
+        for i in "${backupdirlist[@]}" ; do
+            #echo checking $i
+            if grep -q $i $BACKUP_RATINGS; then
+                #echo found $i removing from the list
+                lastknownbackup=$i # keeping track of the last removed entry
+                unset backupdirlist[$j] # remove by index (this works even while we are iterating the array because of bash's copy-on-read)
+            fi
+            ((j++)) # track index because we are dealing with an array
+        done
+        if [[ ${#backupdirlist[@]} -eq 0 ]]; then
+            echo $1: Nothing to do.
+            return
+        fi
+        # if this is an update to the already known information then the last existing backup becomes the first reference backup for the update (our backups are full incrementals)
+        # force rescanning of the last backup, so the next one shows ups as a continuation. Insert as the first element
+        backupdirlist=("$lastknownbackup" "${backupdirlist[@]}")
+    fi
+    echo ----------------------------------------- $1 ----------------------------------------- >> $BACKUP_CONTENTS # visual separator between the backup sets
+    #lastbackup=${backupdirlist[$(( ${#backupdirlist[*]} - 1 ))]}
+    #echo resulting list: ${backupdirlist[@]}
+    #return
+    #echo $firstbackup $lastbackup
+    for i in "${backupdirlist[@]}" ; do     # analyze the folders listed in the backupdirlist
+        if [[ -L "$i" ]]; then  # $i is a symlink
+            continue
+        fi
+        if [[ $i == $lastknownbackup ]]; then # last backup is used as a baseline
+           echo -n "Collecting $i..."
+        else
+           echo -n "Examining $i..."
+        fi
+        ((backupcounter++))
+        totalcount=0
+        totalsize=0
+        uniquecount=0
+        uniquesize=0
+        start=`date +%s`
+        unset backuphash # clear list of files in this backup
+        declare -A backuphash #contains files unque to this backup
+        #oldIFS="$IFS"
+        ilen=${#i}
+        ((ilen++)) # trailing slash
+        #for file in $(sudo find $i -type f -printf "%s-%n\n"); do # this loop is possible because there are no spaces in the printf. However It's slower than the forked while below
+        # the loop below takes most time, so it should be as tight as possible
+        while IFS= read -d '' -r file; do # IFS= removes default line splits on \t, space and \n, allowing them in file names
+            IFS=$'\b' read -d '' -r name size ncount <<<"$file"
+            ((totalsize+=size))
+            ((totalcount++))
+            if [[ -z $ncount ]]; then # error checking
+                echo "Error - $file=$name-$size-$ncount"
+                exit
+            fi
+            if [[ $ncount -eq 1 ]]; then
+                ((uniquesize+=size))
+                ((uniquecount++))
+                shortname=${name:ilen} # trim the backup name from the file name, faster alternative to shortname=${name#$i/} # remove the backup name
+                ((filehash['$shortname']++)) # count the number of times the file shows up with one hardlink, i.e. how often file occurs in backups as unique
+                backuphash["$shortname"]=$size # double quote here and a single quote in the (( )) below is important. Bash is screwy like that
+                ((filespace['$shortname']+=size)) # total space used by the file
+            fi
+        done < <(sudo find $i -type f -printf "%p\b%s\b%n\0")   # file name, size in bytes and number of hardlinks. can not use %f instead of %p because we need the folder name. Using \b (backspace) as a separator. Although it COULD appear in a name it is very unlikely. / and \0 are the only disallowed character in ext4 file name. / is in paths though
+        #echo ${#filehash[@]}
+        if [[ $totalcount -eq 0 || $totalsize -eq 0 ]]; then
+            echo "Empty backup (no files of any kind)"
+            printf "%'6dMB/%'7dMB (%5.2f%%)\t%'8d/%'8d (%5.2f%%)\t$i\n" 0 0 0 0 0 0 >> $BACKUP_USAGE
+            printf "*** %s -  0%% total content. No files\n" $i >> $BACKUP_RATINGS
+            continue
+        fi
+        ((totalspace+=uniquesize)) # keep track of the total space used by all unique files in all backups
+        # add symlinks into the total count (sans directories). These produce correct count of files that can be used to see the progress of the rmWithProgress
+        symlinkcount=$(sudo find $i -type l -printf '.' | wc -c)  # prinft and wc -c is faster than wc -l
+        ((totalcount+=symlinkcount))
+        echo -n "reviewing ..." # ${#filehash[@]}..."
+        # reduce the "uniquiness" factor if the file is marked as unique, but it has already appeared as unique in backups before this one.
+        # I.e. it's a file that changes often and is backed up often, therefore less important to keep around
+        repeatcount=0
+        for k in "${!backuphash[@]}" ; do
+            if [[ ${filehash[$k]} -gt 1 ]]; then # no need to check if k is in file hash - a unique to this backup file will be in the globally unique list by definition
+                ((repeatcount++)) # the file $k showed up as unique more than once, therefore it's a repeat-unique
+            fi
+        done
+        # calc the exclusivity heuristic. here it's only backward looking (filehash accumulates per backup seen so far), therefore the first backup is always 100% exclusive
+        if [[ -z "$lastknownbackup" || $i != $lastknownbackup ]]; then # we dont need to report on the first backup for updates - it's either the first (100% unique) or the last recorded backup in the $BACKUP_RATINGS file
+            # To make the exclusivity heuristic global you need to take the followin code outside of this loop, and build another loop like the one you are in
+                if [[ $uniquecount -ne 0 ]]; then
+                    uniquerating=$(echo "scale=2; 100*(1-$repeatcount/$uniquecount)"|bc -l)
+                    printf "*** %s - %3.0f%% exclusive content (%5d changed files, %5d repeat changes, consuming %'6dMB)\n" $i $uniquerating $uniquecount $repeatcount $(echo "scale=0;$uniquesize/1048576"|bc -l) >> $BACKUP_RATINGS
+                    # save the unique content - note that this skips the first and the last backup. They will always be not deleted, have most unique content (which causes sort to talk every long time) and mostly irrelevant.
+                    echo "*** Top $BIGGEST_FILES_NUM biggest unique files in $i, out of $uniquecount unique files" >> $BACKUP_CONTENTS
+                    for jj in  $(seq 1 $BIGGEST_FILES_NUM); do # simple {1..$BIGGEST_FILES_NUM} is not supported in bash 4
+                        max=0
+                        name=""
+                        for k in "${!backuphash[@]}" ; do
+                            if [[ ${backuphash[$k]} -ge $max ]]; then
+                               max=${backuphash[$k]}
+                               name=$k
+                            fi
+                        done
+                        if [[ -z $name ]]; then
+                           break # no other unique files
+                        fi
+                        # report and remove the current max, so we can go over to the next
+                        printf "%'6dMB %s\n" $(echo "scale=0;$max/1048576"|bc -l) "$name" >> $BACKUP_CONTENTS
+                        backuphash[$name]=-1
+                    done
+                    # show all, sorted by size
+                    #for k in "${!backuphash[@]}" ; do
+                    #   printf "%'6dMB %s\n" $(echo "scale=0;${backuphash[$k]}/1048576"|bc -l) "$k"
+                    #done | sort -rn >> $BACKUP_CONTENTS # sorting takes looooong time for big file counts (>10k)
+                else
+                    printf "*** %s -   0%% exclusive content. No changed files\n" $i >> $BACKUP_RATINGS
+                fi
+                fileper=$(echo "scale=2; 100*$uniquecount/$totalcount"|bc -l) # using bc because bash does not do float
+                sizeper=$(echo "scale=2; 100*$uniquesize/$totalsize"|bc -l) # using bc because bash does not do float
+                printf "Total: %'dMB in %'d files. Changes: %'dMB ($sizeper%%) in %'d files ($fileper%%). " $(echo "scale=0;$totalsize/1048576"|bc -l) $totalcount $(echo "scale=0;$uniquesize/1048576"|bc -l) $uniquecount
+                printf "%'6dMB/%'7dMB (%5.2f%%)\t%'8d/%'8d (%5.2f%%)\t$i\n" $(echo "scale=0;$uniquesize/1048576"|bc -l) $(echo "scale=0;$totalsize/1048576"|bc -l) $sizeper $uniquecount $totalcount $fileper >> $BACKUP_USAGE
+        fi
+        end=`date +%s`
+        echo "Took $((end-start)) seconds."
+        #if [[ $backupcounter -eq 4 ]]; then break; fi
+    done
+    # note that stats below do NOT include all files. There could be files that are backed up more than once that use more total space than the unique files listed below
+    # TODO to track all files you'll need a hash that's keyed on an inode, tracking names and sizes for all inodes encountered, and then summarized over unique file names
+    printf "### Top %d unique files using up most disk space in %s, out of %'dMB used by unique files\n" $TOTAL_SIZE_FILES_NUM $1 $(echo "scale=0;$totalspace/1048576"|bc -l) >> $BACKUP_CONTENTS
+    #echo ${filehash[@]}
+    for jj in $(seq 1 $TOTAL_SIZE_FILES_NUM); do
+        maxnum=0
+        name=""
+        for k in "${!filespace[@]}" ; do
+            if [[ ${filespace[$k]} -ge $maxnum ]]; then
+                maxnum=${filespace[$k]}
+                name=$k
+            fi
+        done
+        if [[ -z $name ]]; then
+           break # no other files
+        fi
+        # report and remove the current max, so we can go over to the next
+        printf "%'6dMB - %s\n"  $(echo "scale=0;$maxnum/1048576"|bc -l) "$name" >> $BACKUP_CONTENTS
+        filespace[$name]=-1
+    done
+    echo "### Top $FREQUENT_FILES_NUM most frequently backed up files in $1, out of $backupcounter backups" >> $BACKUP_CONTENTS
+    #echo ${filehash[@]}
+    # TODO this will be tremendously inefficient in case of 1 or 2 backups in a set as the loop below will keep finding 1 or 2 because of -ge, but we can't use -gt since it will exclude multiple matching maximums
+    # we could terminate the inner loop if the max is reached again,after finding the first max, but the proper solution is to build the array of values we max values we find as we loop over all values
+    for jj in $(seq 1 $FREQUENT_FILES_NUM); do
+        maxnum=0
+        name=""
+        for k in "${!filehash[@]}" ; do
+            if [[ ${filehash[$k]} -ge $maxnum ]]; then
+                maxnum=${filehash[$k]}
+                name=$k
+            fi
+        done
+        if [[ -z $name ]]; then
+           break # no other unique files
+        fi
+        # report and remove the current max, so we can go over to the next
+        printf "%'8d times (%3d%% of all backups) - %s\n" $maxnum $(echo "scale=0;100*$maxnum/$backupcounter"|bc -l) "$name" >> $BACKUP_CONTENTS
+        filehash[$name]=-1
+    done
+    #for k in "${!filehash[@]}" ; do
+    #   if [[ ${filehash[$k]} -eq $backupcounter ]]; then
+    #       #echo $k = ${filehash[$k]} >> $TRANSLOG
+    #       echo $k >> $TRANSLOG
+    #   fi
+    #done
+    #echo "*** File occurence for $1 ($backupcounter backups total)" >> $BACKUP_CONTENTS
+    #for k in "${!filehash[@]}" ; do
+    #   printf "%8d - %s\n" ${filehash[$k]} "$k"
+    #done | sort -rn >> $BACKUP_CONTENTS
 }
 
 rmWithProgress(){
     # remove a backup folder for a synthetic full backup displaying progress
     # the total number of files/folders to delete is estimated from the previously recorded data by backup-analyzer. If missing the files are counted by 'find'
-    if [ -d "$1" ]; then
+    if [[ -d "$1" ]]; then
         exclusivity=$(grep $1 $BACKUP_RATINGS | awk '{print $4}')
         echo -n "$1 ($exclusivity): "
         dir=${1%/} # remove trailing slash
         # try to find an entry in backup-analyzer-usage.list - use as the target for PV
-        filecount=$(sed -nr "s@.*\/(.*) \(.*$dir@\1@p" $BACKUP_USAGE | tr -d ' ,') # use @ sign to avoid issues with / in the full path names affecting the regexp patter. TR removes the thousands delimiter comma and padding
+        filecount=$(sed -nr "s|.*\/(.*) \(.*$dir|\1|p" $BACKUP_USAGE | tr -d ' ,') # using | sign in sed to avoid issues with / in the full path names affecting the regexp patter. TR removes the thousands delimiter comma and padding
+        filespace=$(sed -nr "s|([^/]*).*$dir|\1|p" $BACKUP_USAGE)
         # echo sed -nr "s/.*\/(.*) \(.*$dir/\1/p" ~/bin/backup-analyzer-usage.list $filecount
         if [[ -z $filecount ]]; then
-		echo -n counting...
-        	filecount=$(find $1 -type f|pv -l|wc -l) # count files only because rm is filtered later to not show directories (to match the backup-analyzer-usage stats)
+            echo -n counting...
+            filecount=$(find $1 \( -type f -o -type l \) -printf '.'|pv|wc -c) # count files and symlinks because to match the backup-analyzer-usage stats. printf is used because it's faster than writing lines
         fi
-        echo -n $filecount files and directories.
+        echo -n "$filecount files."
+        if [[ -n $filespace ]]; then
+           echo -n "$filespace."
+        fi
         if [[ "$2" == "no" ]]; then
-        	echo " Removing ..."
-	        # verbose removal, pv shows the progres of [-l]ines, with higher bound by [-s] number. The redirect is to swallow rm output, not pv
-        	# sed is to filter out directory removal notices because the analyzed counts only files, but rm tells about removal of directories
-        	rm -vrf $1 | sed '/directory:/d' | pv --line-mode --size $filecount > /dev/null
-        	if [[ $? -eq 0 ]]; then
-		    	# remove the record from the file
-    			sed -i "\|$1|d" $BACKUP_RATINGS # \| to use | as a pattern separator since $f contains a lot of slashes, [-i] is to remove the line from a file in situ (edit file)
-    			sed -i "\|$1|d" $BACKUP_USAGE   # \| to use | as a pattern separator since $f contains a lot of slashes, [-i] is to remove the line from a file in situ (edit file)
-        	else
-        		echo Error $?;
-        	fi
-	else
-        	echo " Ignoring (dry run)..."
+            echo " Removing ..."
+            # verbose removal, pv shows the progres of [-l]ines, with higher bound by [-s] number. The redirect is to swallow rm output, not pv
+            # sed is to filter out directory removal notices because the analyzed counts only files, but rm tells about removal of directories
+            rm -vrf $1 | sed '/^removed directory/d' | pv --line-mode --size $filecount > /dev/null
+            if [[ $? -eq 0 ]]; then
+                # remove the record from the file
+                sed -i "\|$1|d" $BACKUP_RATINGS # \| to use | as a pattern separator since $f contains a lot of slashes, [-i] is to remove the line from a file in situ (edit file)
+                sed -i "\|$1|d" $BACKUP_USAGE   # \| to use | as a pattern separator since $f contains a lot of slashes, [-i] is to remove the line from a file in situ (edit file)
+            else
+                echo "Error $?"
+            fi
+        else
+            echo " Ignoring (dry run)..."
         fi
     else
-    	echo $1 directory is not found
+        echo $1 directory is not found
     fi
 }
 
 shipOut (){
-    # Archive old backups. First option - name of the system, second age in days, (will archive if older)
-    for i in $BACKUPSOURCE/$1/* ; do
-	echo -ne "Checking $i...\r"
-	backupdate=$(echo $i | tr . ' ' | awk '{gsub("-",":",$3); print $2,$3}') 	# makes the date from the folder name readable by the 'date' command
-	if [ $(dateDiff -d "now" $backupdate) -gt $2 ]; then
-        	echo -n "$i is older than $2 days ago..." | tee -a $LOG
-		# check if it contains unique data
-		uniquefiles=$(sudo find "$i" -type f -links 1 -ls)
-		if [[ -z "$uniquefiles" ]]; then
-			echo -n "No unique data...deleting..." | tee -a $LOG
-			sudo rm -rf "$i" | tee -a $LOG
-			echo "done." | tee -a $LOG
-			continue
-		fi
-		uniquecount=$(echo "$uniquefiles" | wc -l)
-		echo -n "$uniquecount unique files. Shipping out..." | tee -a $LOG
-		k=0
-		archivename=$(basename \"$i\")
-		for j in $BACKUPARCHIVE/$1/${archivename%%.*}* ; do		# perform hard linking against all existing backups of the same system to save space. Only looking for folders starting with the same folder prefix - important for folders with multiple subarchives like "web"
-			if [ "$archivename" != "$(basename \"$j\")" ]; then 	# this condition (backup folder already in archives) may happen if we are resuming an interrupted backup
-				if [ -d "$j" ]; then 					# this condition (non directories) may happen if there are some accidental files in the main folder
-					linkdestarray[$k]="--link-dest=$j"		# this will cause rsync to fail if there are spaces in $j, however quoting "$j" makes rsync not find link-dest folders (rsync v3.0.9)
-					(( k++ ))
-					(( k = k % 20 ))				# limit to the last 20 linkdests (rsync limitation)
-				fi
-			fi
-		done
-		linkdest=$(printf " %s" "${linkdestarray[@]}") # join array into a string
-		linkdest=${linkdest:1}
-		tic=$(date +%s)
-		sudo rsync -vaH --numeric-ids --remove-source-files $linkdest $i/ $BACKUPARCHIVE/$1/$(basename $i) 2>$ERRLOG 1>&2
-		# --log-file $LOG --log-file-format="%i %10l %n %L"
-		#-z not necessary for the local backup
-		if [[ ($? -eq 0) ]]; then
-			toc=$(date +%s)
-			echo "finished successfully in $((toc-tic)) seconds." | tee -a $LOG
-			echo -n "Removing archived backup..."  | tee -a $LOG
-			sudo find "$i" \( -type d -o -type l \) -delete # all files should be already deleted by rsync's --remove-source-files option. Delete remaining symlinks and directories. This is a bit safer approach than sudo rm -rf "$i"
-			echo "done."  | tee -a $LOG
-		else
-			error=$?
-			issuetext=$issuetext"Archiving of $i finished with the error code $error\n" # this will be sent in an email and saved to a log by alertAsNeeded
-			issuetext=$issuetext"Errors collected during the last run from stderr:"$(cat $ERRLOG)"\n"
-			issueflag=1
-			return $error	# exit from the function
-		fi
-		#exit 1
-	fi
+    # Move a backup folder for a synthetic full backup, displaying progress
+    log=$DIR/logs/ship-out.log
+    errorlog=$DIR/logs/ship-out.errors
+    DATE=$(date +%Y-%m-%d.%H-%M-%S)     # date format to use. if you change this make sure the date can be read by 'checkBackupTime()
+    # check free space on the $BACKUPARCHIVE first
+    grep -qs "$BACKUPARCHIVE" /proc/mounts
+    if [[ $? -eq 1 ]]; then
+       echo "*** Backup disk $BACKUPARCHIVE is not mounted. Exiting." | tee -a $log
+       return 99
+    fi
+    if [[ -n "$BACKUPARCHIVE" ]]; then
+       freespace=$(df -m $BACKUPARCHIVE | awk "NR==2{print \$4}")
+       if [ $freespace -le $MINSPACE ]; then
+          echo -e "*** Archived backup space is running short. Only $freespace MB left on $BACKUPARCHIVE!\nArchives will not be shipped out"  | tee -a $log
+          return 95
+       fi
+    fi
+
+    echo --------------------------------------------------- >> $log
+    if [ -d "$1" ]; then
+        exclusivity=$(grep $1 $BACKUP_RATINGS | awk '{print $4}')
+        echo -n "Shipping out $1 ($exclusivity). " | tee -a $log
+        dir=${1%/} # remove trailing slash
+        # try to find an entry in backup-analyzer-usage.list - use as the target for PV
+        filecount=$(sed -nr "s|.*\/(.*) \(.*$dir|\1|p" $BACKUP_USAGE | tr -d ' ,')
+        filespace=$(sed -nr "s|([^/]*).*$dir|\1|p" $BACKUP_USAGE)
+        if [[ "$2" == "no" ]]; then
+            if [[ -z $filecount ]]; then
+                echo -n counting entites ...
+                filecount=$(find $1 -printf '.'|pv|wc -c) # count everything, since rsync reports on everything (and more)
+            else
+                echo -n counting folders ... # add folders back in
+                foldercount=$(find $1 -type d -printf '.'|wc -c) # count everything, since rsync reports on everything (and more)
+                ((filecount+=foldercount))
+            fi
+            echo -n "$filecount files and folders." | tee -a $log
+            if [[ -n $filespace ]]; then
+               echo -n "$filespace." | tee -a $log
+            fi
+            ((filecount+=4)) # rsync's verbose format status lines
+            # check if it contains no unique data and delete instead of moving
+            #uniquefiles=$(sudo find "$i" -type f -links 1 -ls)
+            #if [[ -z "$uniquefiles" ]]; then
+            #   echo -n "No unique data...deleting..." | tee -a $LOG
+            #   sudo rm -rf "$i" | tee -a $LOG
+            #   echo "done." | tee -a $LOG
+            #   continue
+            #fi
+            k=0
+            archivename=$(basename $dir) # no spaces allowed
+            systemname=$(basename ${dir%$archivename}) # name of the folder containing the archive
+            #for j in $BACKUPARCHIVE/$1/${archivename%%.*}* ; do        # perform hard linking against all existing backups of the same system to save space. Only looking for folders starting with the same folder prefix - important for folders with multiple subarchives like "web"
+            if [[ -d "$BACKUPARCHIVE/$systemname" ]]; then
+                if [[ $(find $BACKUPARCHIVE/$systemname/ -maxdepth 1 -type d | wc -l) -gt 2 ]]; then # if there are subfolders
+                    for j in $BACKUPARCHIVE/$systemname/* ; do      # perform hard linking against all existing backups of the same system to save space.
+                        if [ "$archivename" != "$(basename $j)" ]; then     # this condition (backup folder already in archives) may happen if we are resuming an interrupted backup
+                            if [ -d "$j" ]; then                    # this condition (non directories) may happen if there are some accidental files in the main folder
+                                linkdestarray[$k]="--link-dest=$j"      # this will cause rsync to fail if there are spaces in $j, however quoting "$j" makes rsync not find link-dest folders (rsync v3.0.9)
+                                #linkdestarray[$k]="--link-dest=../$(basename $j)"      # for remote systems link-dest is relative to the backup folder
+                                (( k++ ))
+                                (( k = k % 20 ))                # limit to the last 20 linkdests (rsync limitation)
+                            fi
+                        fi
+                    done
+                    fi
+            else
+                mkdir "$BACKUPARCHIVE/$systemname"
+            fi
+            linkdest=$(printf " %s" "${linkdestarray[@]}") # join array into a string
+            linkdest=${linkdest:1}
+            tic=$(date +%s)
+            echo rsync -vaH --numeric-ids --remove-source-files --log-file $log --log-file-format=\"%i %10l %n %L\" $linkdest $dir/ $BACKUPARCHIVE/$systemname/$archivename | tee -a $log
+            rsync -vaH --numeric-ids --remove-source-files --log-file $log --log-file-format="%i %10l %n %L" $linkdest $dir/ $BACKUPARCHIVE/$systemname/$archivename 2>$errorlog | pv --line-mode --size $filecount > /dev/null
+            #-z not necessary for the local backup
+            if [[ ($? -eq 0) ]]; then
+                echo -n "Removing archived backup..."  | tee -a $log
+                find $dir \( -type d -o -type l \) -delete # all files should be already deleted by rsync's --remove-source-files option. Delete remaining symlinks and directories. This is a bit safer approach than sudo rm -rf "$i"
+                echo "done."  | tee -a $log
+                toc=$(date +%s)
+                echo "*** Finished successfully in $((toc-tic)) seconds." | tee -a $log
+            else
+                error=$?
+                echo "*** Shipping out of $i finished with the error code $error\n" | tee -a "$log"
+                echo "Error Log:\n$(tail -n 1 $errorlog)"
+            fi
+        else
+                echo " Ignoring (dry run)..." | tee -a $log
+        fi
+    else
+        echo $1 directory is not found
+    fi
+    #exit 1
 # echo -n Calculating size for $i in megabytes ...
-#	size=$(find $i -links -2 -print0 | du -cm --files0-from=- | sed -n 's/\stotal//p')
-	#size=$(( echo '(' ; find $i -type d -printf '%k + ' ; find $i \! -type d -printf '%n\t%i\t%k\n' | sort | uniq -c |  awk '$1 >= $2 { print $4 " +\\" }' ; echo '0)/1048576' ) | bc)
-#	echo -e "$size\t$i\t$DATE" >> $LOG
-    done
-    echo # skip to the next line
+#   size=$(find $i -links -2 -print0 | du -cm --files0-from=- | sed -n 's/\stotal//p')
+    #size=$(( echo '(' ; find $i -type d -printf '%k + ' ; find $i \! -type d -printf '%n\t%i\t%k\n' | sort | uniq -c |  awk '$1 >= $2 { print $4 " +\\" }' ; echo '0)/1048576' ) | bc)
+#   echo -e "$size\t$i\t$DATE" >> $LOG
 }
