@@ -3,7 +3,9 @@
 # 2016 (c) Alex Ivkin
 #
 # TODO remove hardcoded sudo's from some routines (analyze)
-# Add the strict checking as below.
+#    Change references from BACKUPDESTDIR to REMOTEDEST for remote backups
+#    Move error handling from each of the backups into a common routine
+#    Add the strict checking as below.
 #set -euo pipefail
 #IFS=$'\n\t'
 # To counter set -u in valid cases of using unassigned variable. Use default values x=${1:-DEFAULT_VALUE}; e.g var=${1:-} to set var blank if $1 is not set
@@ -12,9 +14,6 @@
 
 source "${0%/*}/backup.config" # get backup configuration variables
 
-# TODOs
-#    Change references from BACKUPDESTDIR to REMOTEDEST for remote backups
-#    Move error handling from each of the backups into a common routine
 initBackup() {
     # Perform basic checks before the backup
     # called by most backup functions

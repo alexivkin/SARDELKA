@@ -5,4 +5,4 @@ date >> ~/bin/restore.log
 rsync -nvarz --stats --log-file ~/bin/restore.log /media/Backups/system/home/user/ /home/user/
 
 # backups from remote can be restored like this:
-# rsync -vaxH /media/Backups/remote/~.2014-03-12.00-00-01/ user@server:
+# rsync -vaxH /media/Backups/remote/remote.2011-01-01.00-00-01/ user@server:
