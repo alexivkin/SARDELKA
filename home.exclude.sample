@@ -1,0 +1,16 @@
+*~
+donotbackup*
+.adobe/Flash_Player/AssetCache/
+.cache/
+.cpan/
+.dbus/
+.gvfs/
+.java/deployment/cache/*
+.local/share/Trash/*
+.mozilla/firefox/*.default/Cache/*
+.mozilla/firefox/*.default/OfflineCache/*
+.thumbnails/
+.thunderbird/*.default/Cache/*
+.Xauthority
+.xsession-errors
+.local/share/icons

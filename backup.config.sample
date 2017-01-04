@@ -1,0 +1,28 @@
+#------------[ Configuration variables ] -----------
+#
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )" # folder where all logs and supporting files are kept. Defaults to the same folder this script is in
+
+BACKUPDESTDIR=/media/Backups 		# backup destination
+BACKUPARCHIVE=/media/BackupsArchives 	# define this variable if you want to archive old backups to a secondary location after certain time
+STATUSLOG=$DIR/backup.status 		# common log where status for all backups is kept
+MINSPACE=10000 				# minimum free space before aborting a backup, in megabytes
+
+# Backup analyzer configuration
+BACKUP_RATINGS=$DIR/backup-analyzer-ratings.list
+BACKUP_USAGE=$DIR/backup-analyzer-disk-usage.list
+BACKUP_CONTENTS=$DIR/backup-analyzer-contents.list
+BIGGEST_FILES_NUM=5			# how many biggest files to report
+FREQUENT_FILES_NUM=15			# how many frequently backed up files to report
+TOTAL_SIZE_FILES_NUM=15			# how many files using the most disk space across all backups to report
+
+# Remote backup configuration
+IF=eth0					# interface that is allowed to be used for backups
+ROUTERIP="192.168.1.1" 			# router ip to validate that we are on the right network
+ROUTERMAC="00:11:22:aa:bb:cc" 		# expected router MAC address
+NETMASK="192.168.1.0/24" 		# expected network
+SSH_CONTROL_SOCKET=$DIR/ssh_control_socket # file handle to control the SSH tunnel with
+
+# Backup monitor configuration
+ALERT_TOLERANCE_FACTOR=2 		# multiplication factor for the number of days that the backup has not completed successfuly before invoking the alert script
+ALERT_EMAIL=user@server.tld
+#ALERT_SCRIPT=/path/home/send-email.sh  # script to use for alerting. If not defined then system's mailx will be used

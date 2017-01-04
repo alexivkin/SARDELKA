@@ -1,0 +1,40 @@
+*~
+# ** used to skip all files but not folders to simplify bare metal restore
+/proc/**
+/sys/**
+/dev/**
+/media/**
+/tmp/**
+/home/**
+/run/**
+/var/lib/apt/lists/**
+/lib/udev/**
+/var/lib/dpkg/info/
+# skip inaccessible folders even by root
+# strangely only the non-slash terminated string below works properly
+/var/cache/system-tools-backends
+/var/cache/**
+# /var/log/** - keep logs, they come handy sometimes
+/var/run/**
+/var/tmp/**
+/var/spool/cups/**
+/var/spool/postfix/**
+/var/lib/**
+# more precisely
+#/var/lib/ureadahead/**
+#/var/lib/apt/lists/
+#/var/lib/apt/periodic/
+#/var/lib/dpkg/
+#/var/lib/nfs/
+#/var/lib/mpd/.pulse/
+#/var/lib/misc/
+#/var/lib/lightdm/.dbus/
+#/var/lib/juju/removed-containers/
+#/var/backups/
+#/var/lib/apt-xapian-index/
+#/var/lib/logrotate/
+#/var/lib/mlocate/
+#/var/lib/mysql/
+#/var/lib/ntp/
+#/var/lib/php5
+
