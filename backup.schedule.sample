@@ -1,5 +1,5 @@
 # -------------------[ Backup schedule ]----------------------
-# 
+#
 # Name		Type			Frequency	Options
 #
 # Name: name of the local folder where backups are kept, also the name of the log file. No spaces allowed in the name, names should be unique
@@ -19,7 +19,7 @@
 system1		syntheticFullBackup	1		/home				# backup /home
 full-system	syntheticFullBackup	7		/,sudo				# backup everything
 system2		fullBackup 		1		/media/Archive/Folders/,keep	# full backup
-remote1		syntheticFullBackup 	1		luluslau@ivkin.net:             # backup remote system
+remote1		syntheticFullBackup 	1		user@server.com:		# backup remote system
 sysconfig	configurationBackup 	7		/media/Folder1,/media/Folder2	# system config and media folder lists
 photos		folderBackup 		7		~/Documents			# just the folder backup
 remote2		tsmBackup 		7		user,22				# tivoli storage manager backup

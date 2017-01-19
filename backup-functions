@@ -333,13 +333,19 @@ tsmBackup() {
         echo "*** Setting up the SSH to $SERVER:$SSH_PORT" | tee -a $log
         ssh -fNM -S $SSH_CONTROL_SOCKET -L 1800:localhost:1500 -p $SSH_PORT $USER@$SERVER
         if [[ $? -ne 0 ]]; then
-            echo "*** SSH tunneling failed. Sending a server wake-up command, and waiting 30 seconds..." | tee -a $log
-            wakeonlan -i $SERVER 00:23:54:25:8E:FA
-            sleep 30
-            echo "*** Retrying SSH tunnel setup ..." | tee -a $log
-            ssh -fNM -S $SSH_CONTROL_SOCKET -L 1800:localhost:1500 -p $SSH_PORT $USER@$SERVER
-            if [[ $? -ne 0 ]]; then
-                echo "*** SSH tunneling failed!" | tee -a $log
+            echo "*** SSH tunneling failed." | tee -a $log
+            if [[ -z $WOL_MAC ]]; then
+                echo "Sending a server wake-up command, and waiting 30 seconds..." | tee -a $log
+                wakeonlan -i $SERVER $WOL_MAC
+                sleep 30
+                echo "*** Retrying SSH tunnel setup ..." | tee -a $log
+                ssh -fNM -S $SSH_CONTROL_SOCKET -L 1800:localhost:1500 -p $SSH_PORT $USER@$SERVER
+                if [[ $? -ne 0 ]]; then
+                   echo "*** Server did not wake up." | tee -a $log
+                   echo $DATE 10 $SERVER >> $STATUSLOG
+                   return 10
+                fi
+            else
                 echo $DATE 9 $SERVER >> $STATUSLOG
                 return 9
             fi
