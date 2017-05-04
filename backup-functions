@@ -108,7 +108,7 @@ syntheticFullBackup() {
     # Options
     #   - source folder
     #   - name of the backup folder (single the folder name under the backup disk), or a remote server source folder
-    #   - "sudo" for running rsync as root
+    #   - "sudo" for running rsync locally as root
     #   - (optional) remote rsync url if backing up to a remote system, e.g. rsync://user@server/backup
     initBackup $1 "$2" $4
     if [[ $? -ne 0 ]]; then return; fi
@@ -131,7 +131,12 @@ syntheticFullBackup() {
             opts+=(--link-dest=../$(basename $LASTBACKUPFULLNAME))  # for remote systems it needs to be relative, not absolute, due to the URL addressing scheme
             #echo "*** Backing up against $LASTBACKUPFULLNAME" | tee -a $log
         fi
-        destination=$destURL$source.$DATE
+        lastfolder=${source##*/}    # trim to the last folder
+        if [[ -z $lastfolder ]]; then   # for root just use the name of the system
+            destination=$destURL/$backupset.$DATE
+        else
+            destination=$destURL$source.$DATE
+        fi
     else
         destination=$linkdest.$DATE
         opts=(--link-dest=$linkdest)
@@ -139,7 +144,7 @@ syntheticFullBackup() {
     if [[ $3 == "sudo" ]]; then
         runopt="sudo"
     else
-            runopt=""
+        runopt=""
     fi
     # using sudo to ensure all user folders are backedup
     # verbose, archive (-rlptgoD), dont cross file systems and preserve hard links. add -x to not cross file systems
@@ -155,10 +160,11 @@ syntheticFullBackup() {
         # 2. some further backups to remote systems, like TSM can't work with relative links
         if [[ -n $destURL ]]; then  # backing up to remote rsync
             ssh -n $SERVER "ln -snf $linkdest.$DATE $linkdest; echo $DATE 0 $backupset >> $STATUSLOG"
+            echo "$DATE 0 $backupset (sourced from $SERVER:$STATUSLOG)" >> $STATUSLOG
         else
             ln -snf $linkdest.$DATE $linkdest
+            echo "$DATE 0 $backupset" >> $STATUSLOG
         fi
-        echo $DATE 0 $backupset >> $STATUSLOG
     else
         error=$?
         echo "*** $backupset $source backup for $DATE finished with $error" | tee -a $log
@@ -166,10 +172,11 @@ syntheticFullBackup() {
         cat $errorlog | tee -a $log
         if [[ -n $destURL ]]; then  # backing up to remote rsync
             ssh -n $SERVER "mv $linkdest.$DATE $linkdest.$DATE.partial; echo $DATE $error $backupset >> $STATUSLOG"
+            echo "$DATE $error $backupset (sourced from $SERVER:$STATUSLOG)" >> $STATUSLOG
         else
             mv $linkdest.$DATE $linkdest.$DATE.partial
+            echo "$DATE $error $backupset" >> $STATUSLOG
         fi
-        echo $DATE $error $backupset >> $STATUSLOG
     fi
 }
 
@@ -208,8 +215,10 @@ fullBackup(){
         echo "*** Full backup for $backupset on $DATE successful" | tee -a "$log"
         if [[ -n $destURL ]]; then  # backing up to remote rsync
             ssh -n $SERVER "echo $DATE 0 $backupset >>$STATUSLOG"
+            echo "$DATE 0 $backupset (sourced from $SERVER:$STATUSLOG)" >> $STATUSLOG
+        else
+            echo $DATE 0 $backupset >>$STATUSLOG
         fi
-        echo $DATE 0 $backupset >>$STATUSLOG
     else
         error=$?
         echo "*** Full backup for $backupset on $DATE finished with error $error" | tee -a "$log"
@@ -217,8 +226,10 @@ fullBackup(){
         cat "$errorlog" | tee -a "$log"
         if [[ -n $destURL ]]; then  # backing up to remote rsync
             ssh -n $SERVER "echo $DATE $error $backupset >> $STATUSLOG"
+            echo "$DATE $error $backupset (sourced from $SERVER:$STATUSLOG)" >> $STATUSLOG
+        else
+            echo "$DATE $error $backupset" >> $STATUSLOG
         fi
-        echo $DATE $error $backupset >> $STATUSLOG
     fi
 }
 
@@ -232,11 +243,11 @@ folderBackup() {
     tar cpzf "$dest" "$source" 1>>"$DIR/$backupset.log" 2>"$errorlog"
     if [[ $? -eq 0 ]]; then
         echo "*** Folder backup of $source to $dest on $DATE successful" | tee -a "$log"
-        echo $DATE 0 $backupset >>$STATUSLOG
+        echo "$DATE 0 $backupset" >>$STATUSLOG
     else
         error=$?
         echo "*** Folder backup of $source to $dest on $DATE finished with error $error" | tee -a "$log"
-        echo $DATE $error $backupset >> $STATUSLOG
+        echo "$DATE $error $backupset" >> $STATUSLOG
         echo "Errors collected during the last run from stderr:" | tee -a "$log"
         cat "$errorlog" | tee -a "$log"
     fi
@@ -289,8 +300,10 @@ configurationBackup(){
         echo "*** Configuration backup for $system on $DATE successful" | tee -a "$log"
         if [[ -n $destURL ]]; then  # backing up to remote rsync
             ssh -n $SERVER "echo $DATE 0 $backupset >>$STATUSLOG"
+            echo "$DATE 0 $backupset (sourced from $SERVER:$STATUSLOG)" >> $STATUSLOG
+        else
+            echo $DATE 0 $backupset >>$STATUSLOG
         fi
-        echo $DATE 0 $backupset >>$STATUSLOG
         rm ${filelogs[@]}
         rm $archive
         rmdir $tempdir
@@ -299,8 +312,10 @@ configurationBackup(){
         echo "*** Configuration backup for $backupset on $DATE finished with error $error" | tee -a "$log"
         if [[ -n $destURL ]]; then  # backing up to remote rsync
             ssh -n $SERVER "echo $DATE $error $backupset >> $STATUSLOG"
+            echo "$DATE $error $backupset (sourced from $SERVER:$STATUSLOG)" >> $STATUSLOG
+        else
+            echo "$DATE $error $backupset" >> $STATUSLOG
         fi
-        echo $DATE $error $backupset >> $STATUSLOG
         echo "Errors collected during the last run from stderr:" | tee -a "$log"
         cat "$errorlog" | tee -a "$log"
     fi
@@ -647,12 +662,13 @@ rmWithProgress(){
         filespace=$(sed -nr "s|([^/]*).*$dir|\1|p" $BACKUP_USAGE)
         # echo sed -nr "s/.*\/(.*) \(.*$dir/\1/p" ~/bin/backup-analyzer-usage.list $filecount
         if [[ -z $filecount ]]; then
-            echo -n counting...
+            echo "Counting files and links..."
             filecount=$(find $1 \( -type f -o -type l \) -printf '.'|pv|wc -c) # count files and symlinks because to match the backup-analyzer-usage stats. printf is used because it's faster than writing lines
         fi
-        echo -n "$filecount files."
         if [[ -n $filespace ]]; then
-           echo -n "$filespace."
+            echo "$filecount files and links taking $filespace." | tee -a $log
+        else
+            echo "$filecount files and links." | tee -a $log
         fi
         if [[ "$2" == "no" ]]; then
             echo " Removing ..."
@@ -703,18 +719,20 @@ shipOut (){
         filespace=$(sed -nr "s|([^/]*).*$dir|\1|p" $BACKUP_USAGE)
         if [[ "$2" == "no" ]]; then
             if [[ -z $filecount ]]; then
-                echo -n counting entites ...
-                filecount=$(find $1 -printf '.'|pv|wc -c) # count everything, since rsync reports on everything (and more)
+                echo "Counting entites ..."
+                filecount=$(find $1 -printf '.'|pv -pte|wc -c) # count everything, since rsync reports on everything (and more)
             else
-                echo -n counting folders ... # add folders back in
-                foldercount=$(find $1 -type d -printf '.'|wc -c) # count everything, since rsync reports on everything (and more)
+                echo "Counting folders ..." # add folders back in
+                foldercount=$(find $1 -type d -printf '.'|pv -pte|wc -c) # count everything, since rsync reports on everything (and more)
                 ((filecount+=foldercount))
             fi
-            echo -n "$filecount files and folders." | tee -a $log
             if [[ -n $filespace ]]; then
-               echo -n "$filespace." | tee -a $log
+                echo "$filecount files and folders taking $filespace." | tee -a $log
+            else
+                echo "$filecount files and folders." | tee -a $log
             fi
-            ((filecount+=4)) # rsync's verbose format status lines
+            #((filecount+=3)) # rsync's --info format status lines
+
             # check if it contains no unique data and delete instead of moving
             #uniquefiles=$(sudo find "$i" -type f -links 1 -ls)
             #if [[ -z "$uniquefiles" ]]; then
@@ -746,9 +764,10 @@ shipOut (){
             linkdest=$(printf " %s" "${linkdestarray[@]}") # join array into a string
             linkdest=${linkdest:1}
             tic=$(date +%s)
-            echo rsync -vaH --numeric-ids --remove-source-files --log-file $log --log-file-format=\"%i %10l %n %L\" $linkdest $dir/ $BACKUPARCHIVE/$systemname/$archivename | tee -a $log
-            rsync -vaH --numeric-ids --remove-source-files --log-file $log --log-file-format="%i %10l %n %L" $linkdest $dir/ $BACKUPARCHIVE/$systemname/$archivename 2>$errorlog | pv --line-mode --size $filecount > /dev/null
-            #-z not necessary for the local backup
+            echo "Linking with: $linkdest" >> $log # From: $dir/ to: $BACKUPARCHIVE/$systemname/$archivename
+            # using the --info option instead of -v to make sure we have a line per-file, even for these that are being hard-linked. -vv is too verbose
+            # -z not necessary for the local backup
+            rsync -aH --info=copy,name2,skip --remove-source-files --numeric-ids  --log-file $log --log-file-format="%i %10l %n %L" $linkdest $dir/ $BACKUPARCHIVE/$systemname/$archivename 2>$errorlog | pv --line-mode --size $filecount > /dev/null
             if [[ ($? -eq 0) ]]; then
                 echo -n "Removing archived backup..."  | tee -a $log
                 find $dir \( -type d -o -type l \) -delete # all files should be already deleted by rsync's --remove-source-files option. Delete remaining symlinks and directories. This is a bit safer approach than sudo rm -rf "$i"
