@@ -16,7 +16,7 @@ if [[ $# -eq 0 ]]; then
     echo " - with a list of folders to delete. Either relative to the current folder or absolute paths."
     echo
     echo "Each case uses a dry-run by default. Use -f as the last argument to perform the actual delete. Run with sudo for local host comprehensive backups."
-    echo "This script relies on correct content in $BACKUP_RATINGS. Please, run backup-analyzer if you are not seeing some of the backups."
+    echo "This script relies on correct content in $BACKUP_RATINGS. (Re)run backup-analyzer if you are not seeing some of the backups."
     echo "If a backup ends in .keep it will not be removed even with the -f flag"
     echo
     exit 1

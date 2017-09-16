@@ -282,7 +282,7 @@ configurationBackup(){
             continue
         fi
         filelist="$tempdir/$system${var//\//-}-$DATE.log" # replace slashes with dashes
-        find "$var" -type f >$filelist 2>/dev/null
+        find "$var" -type d >$filelist 2>/dev/null # only export folders list, not individual files
         filelogs+=( ${filelist#$tempdir/} ) # save the trimmed log name into an array
     done
     cd $tempdir/

@@ -2,7 +2,7 @@
 
 _**S**uper **A**wesome **R**sync **DE**duplicating **L**in**K**ing **A**uthority_
 
-File integrity monitoring and backup with data deduplication. Intrusion detection system and Incremental backup all in one.
+Backup with data deduplication using nothing but Bash and Rsync. Also does file integrity monitoring, intrusion detection and incremental backup.
 
 The main feature is that they allow you to take a **Synthetic Full Backups** with Rsync. Synthetic Full Backup is a full backup that only takes space required for an incremental backup.
 It does so by using hardlinks for any information that does not change. Essentially you get the best of both worlds: a full backup, always identical to the source at the time when it was taken, and a backup that consumes only the space required for the changes since the last backup.
