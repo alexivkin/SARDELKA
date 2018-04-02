@@ -522,7 +522,7 @@ analyzeBackup() {
         #for file in $(sudo find $i -type f -printf "%s-%n\n"); do # this loop is possible because there are no spaces in the printf. However It's slower than the forked while below
         # the loop below takes most time, so it should be as tight as possible
         while IFS= read -d '' -r file; do # IFS= removes default line splits on \t, space and \n, allowing them in file names
-            IFS=$'\b' read -d '' -r name size ncount <<<"$file"
+            IFS=$'\b' read -d '' -r name size ncount inode <<<"$file"
             ((totalsize+=size))
             ((totalcount++))
             if [[ -z $ncount ]]; then # error checking
@@ -537,7 +537,7 @@ analyzeBackup() {
                 backuphash["$shortname"]=$size # double quote here and a single quote in the (( )) below is important. Bash is screwy like that
                 ((filespace['$shortname']+=size)) # total space used by the file
             fi
-        done < <(sudo find $i -type f -printf "%p\b%s\b%n\0")   # file name, size in bytes and number of hardlinks. can not use %f instead of %p because we need the folder name. Using \b (backspace) as a separator. Although it COULD appear in a name it is very unlikely. / and \0 are the only disallowed character in ext4 file name. / is in paths though
+        done < <(sudo find $i -type f -printf "%p\b%s\b%n\b%i\0")   # file name, size in bytes, number of hardlinks and inode. can not use %f instead of %p because we need the folder name. Using \b (backspace) as a separator. Although it COULD appear in a name it is very unlikely. / and \0 are the only disallowed character in ext4 file name. / is in paths though
         #echo ${#filehash[@]}
         if [[ $totalcount -eq 0 || $totalsize -eq 0 ]]; then
             echo "Empty backup (no files of any kind)"
@@ -598,8 +598,10 @@ analyzeBackup() {
         echo "Took $((end-start)) seconds."
         #if [[ $backupcounter -eq 4 ]]; then break; fi
     done
-    # note that stats below do NOT include all files. There could be files that are backed up more than once that use more total space than the unique files listed below
-    # TODO to track all files you'll need a hash that's keyed on an inode, tracking names and sizes for all inodes encountered, and then summarized over unique file names
+    # TODO that stats below do NOT include all files. There could be files that are backed up more than once that use more total space than the unique files listed below.
+    # TODO to track all files you'll need a hash that's keyed on an inode, tracking names and sizes for all inodes encountered. Hardlinks point to the same inode, so er just need x biggest inodes
+    # TODO this has a complexity of O(n*$TOTAL_SIZE_FILES_NUM). to speed the search build max size array in the original indexing loop O(n)
+    printf "Listing top %d unique files with most disk space used..." $TOTAL_SIZE_FILES_NUM
     printf "### Top %d unique files using up most disk space in %s, out of %'dMB used by unique files\n" $TOTAL_SIZE_FILES_NUM $1 $(echo "scale=0;$totalspace/1048576"|bc -l) >> $BACKUP_CONTENTS
     #echo ${filehash[@]}
     for jj in $(seq 1 $TOTAL_SIZE_FILES_NUM); do
@@ -616,12 +618,14 @@ analyzeBackup() {
         fi
         # report and remove the current max, so we can go over to the next
         printf "%'6dMB - %s\n"  $(echo "scale=0;$maxnum/1048576"|bc -l) "$name" >> $BACKUP_CONTENTS
-        filespace[$name]=-1
+        filespace[$name]=-1 # remove the max to get to the next max
     done
+    printf "Listing %d most frequently backed up files..." $FREQUENT_FILES_NUM
     echo "### Top $FREQUENT_FILES_NUM most frequently backed up files in $1, out of $backupcounter backups" >> $BACKUP_CONTENTS
     #echo ${filehash[@]}
-    # TODO this will be tremendously inefficient in case of 1 or 2 backups in a set as the loop below will keep finding 1 or 2 because of -ge, but we can't use -gt since it will exclude multiple matching maximums
-    # we could terminate the inner loop if the max is reached again,after finding the first max, but the proper solution is to build the array of values we max values we find as we loop over all values
+    # TODO Sort by size so that its easier to understand the issues among the files that show up in the same number of backups
+    # TODO below code tremendously inefficient in case of 1 or 2 backups in a set as the loop below will keep finding 1 or 2 because of -ge, but we can't use -gt since it will exclude multiple matching maximums
+    # we could terminate the inner loop if the max is reached again,after finding the first max, but the proper solution is to build the array of values with max values we find as we loop over all values
     for jj in $(seq 1 $FREQUENT_FILES_NUM); do
         maxnum=0
         name=""
@@ -638,6 +642,7 @@ analyzeBackup() {
         printf "%'8d times (%3d%% of all backups) - %s\n" $maxnum $(echo "scale=0;100*$maxnum/$backupcounter"|bc -l) "$name" >> $BACKUP_CONTENTS
         filehash[$name]=-1
     done
+    echo "done."
     #for k in "${!filehash[@]}" ; do
     #   if [[ ${filehash[$k]} -eq $backupcounter ]]; then
     #       #echo $k = ${filehash[$k]} >> $TRANSLOG

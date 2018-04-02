@@ -7,24 +7,21 @@
 /tmp/**
 /home/**
 /run/**
-/var/lib/apt/lists/**
 /lib/udev/**
+/var/lib/apt/lists/**
 /var/lib/dpkg/info/
-# skip inaccessible folders even by root
-# strangely only the non-slash terminated string below works properly
-/var/cache/system-tools-backends
-/var/cache/**
-# /var/log/** - keep logs, they come handy sometimes
+/var/backups/**
 /var/run/**
 /var/tmp/**
+/var/crash/**
 /var/spool/cups/**
 /var/spool/postfix/**
-/var/lib/**
-# more precisely
+# skip inaccessible folders even by root, strangely only the non-slash terminated string below works properly
+/var/cache/system-tools-backends
+/var/cache/**
+# some other unimportant var lib stuff
 #/var/lib/ureadahead/**
-#/var/lib/apt/lists/
 #/var/lib/apt/periodic/
-#/var/lib/dpkg/
 #/var/lib/nfs/
 #/var/lib/mpd/.pulse/
 #/var/lib/misc/

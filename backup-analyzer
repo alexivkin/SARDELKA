@@ -38,7 +38,7 @@ while read -r -a b; do
             if [[ -d $BACKUPARCHIVE/${b[0]}/ ]]; then
                 analyzeBackup $BACKUPARCHIVE/${b[0]}/
             fi
-            fi
+        fi
     fi
 done < <(sed "s/#.*//" $DIR/backup.schedule | tr '\r' ' ') # trim everything after a hash (i.e comments). trim \r from the end of the line. you could trim it from the array variable too ${b[0]//[$'\r\n']}
 #done < <(sed -n 's/^\([^#].*\)\s*syntheticFullBackup.*/\1/p' $DIR/backup.schedule | tr '\r' ' ') # loop over all synthetic full backups. trim \r from the end of the line. you could trim it from the array variable too ${b[0]//[$'\r\n']}
