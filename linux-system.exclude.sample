@@ -9,7 +9,7 @@
 /run/**
 /var/lib/apt/lists/**
 /lib/udev/**
-/var/lib/dpkg/info/
+#/var/lib/dpkg/info/ - not a good idea to exclude. it is a small folder, but cumbersome to recover
 # skip inaccessible folders even by root
 # strangely only the non-slash terminated string below works properly
 /var/cache/system-tools-backends

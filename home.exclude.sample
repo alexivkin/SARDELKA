@@ -14,3 +14,6 @@ donotbackup*
 .Xauthority
 .xsession-errors
 .local/share/icons
+# exclude files but not folders themselves as these are critical for windows apps to work
+.wine*/drive_c/users/*/Temp/**
+.wine*/drive_c/users/*/Local Settings/Temporary Internet Files/**

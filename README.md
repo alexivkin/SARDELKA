@@ -59,7 +59,7 @@ backup.status shows the status of all past backups. For backups to a remote syst
 ## Limitations
 
 * It's full of Bashisms (the best kind of -isms) and needs a bash 4.2 or above.
-* Synthetic Full Backups work only on file systems that support proper hardlinks (hint, not NTFS - Windows is out)
+* Synthetic Full Backups work only on file systems that support proper hardlinks (hint, not NTFS)
 
 ## Rarely asked questions
 
