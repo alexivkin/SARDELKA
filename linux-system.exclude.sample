@@ -8,9 +8,17 @@
 /home/**
 /run/**
 /lib/udev/**
-/var/lib/apt/lists/**
-/var/lib/dpkg/info/
+<<<<<<< HEAD
+=======
+#/var/lib/apt/lists/**
+#/var/lib/dpkg/info/ - not a good idea to exclude. it is a small folder, but cumbersome to recover
+# skip inaccessible folders even by root
+# strangely only the non-slash terminated string below works properly
+/var/cache/system-tools-backends
+/var/cache/**
+# /var/log/** - keep logs, they come handy sometimes
 /var/backups/**
+>>>>>>> ee9577ae0fdb963f8974e58b39403cde7af194e7
 /var/run/**
 /var/tmp/**
 /var/crash/**
@@ -27,7 +35,6 @@
 #/var/lib/misc/
 #/var/lib/lightdm/.dbus/
 #/var/lib/juju/removed-containers/
-#/var/backups/
 #/var/lib/apt-xapian-index/
 #/var/lib/logrotate/
 #/var/lib/mlocate/

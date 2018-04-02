@@ -1,7 +1,11 @@
 #!/bin/bash
 echo --------------------------------------------------- >> ~/bin/restore-system.log
 date >> ~/bin/restore-system.log
+#
+# To recover the system you could try a base system install and then run the following, or run the following on the bare-metal (empty disk), The latter is not tested may require some empty folders to be pre-created.
+#
 # network level rsync - slower but abstracts the backup folder location
 #sudo rsync -varz --delete --delete-excluded --stats --password-file backup-system.secrets --include-from backup-system.include --exclude-from backup-system.exclude --log-file backup-system.log / rsync://rsyncuser@system/somesystembackup
-# use file system level rsync
+#
+# file system level rsync
 sudo rsync -varz --stats --log-file ~/bin/restore-system.log /media/Backups/some-system/ .
