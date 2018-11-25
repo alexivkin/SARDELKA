@@ -2,20 +2,22 @@
 #
 # Name		Type			Frequency	Options
 #
-# Name: name of the local folder where backups are kept, also the name of the log file. No spaces allowed in the name, names should be unique
-# Types:
+# Name: 
+#	name of the local folder where backups are kept, also the name of the log file. No spaces allowed in the name, names should be unique
+# Type:
 #	fullBackup - a single full rsync copy
 #	syntheticFullBackup - rolling full copies, hardlinking unchanged files
-#	folderBakcup - tar.gz copy of a folder
+#	folderBackup - tar.gz copy of a folder
 #	configurationBackup - system config and file lists, tarred
 #	tsmBackup - backup to a remote TSM system
 # Frequency:
 #	Number of days between each backup. Same day backups are run sequentially in the order they are listed in this file
 # Options - comma separated backup options, can contain spaces
-#	remote - this is an incoming backup. the record is then used to check that a remotely initiated backup run succssfully within the last n days
 #	syntheticFullBackup options: 'source' folder, 'sudo' to use sudo, or '-' to run normally, 'destination' to use remote rsync backup. You can also include an rsync option like --rsync-path="sudo rsync" for remote rsync to have proper permissions
 #	fullBackup options: 'source' folder, 'keep' to have all changed or deleted files moved into a secondary backup folder, (optional) remote rsync URL, e.g. rsync://user@server/backup
 #	configurationBackup options: list of folders to get file/directory lists, remote rsync URL
+#	"remote" - this is an incoming backup. the record is then used to check that a remotely initiated backup run succssfully within the last n days
+#
 system1		syntheticFullBackup	1		/home				# backup /home
 full-system	syntheticFullBackup	7		/,sudo				# backup everything
 system2		fullBackup 		1		/media/Archive/Folders/,keep	# full backup

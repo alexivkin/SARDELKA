@@ -1,6 +1,6 @@
 #!/bin/bash
 # Backup routines
-# 2016 (c) Alex Ivkin
+# 2018 (c) Alex Ivkin
 #
 # TODO remove hardcoded sudo's from some routines (analyze)
 #    Change references from BACKUPDESTDIR to REMOTEDEST for remote backups
@@ -147,14 +147,18 @@ syntheticFullBackup() {
         opts=(--link-dest=$linkdest)
     fi
     if [[ $3 == "sudo" ]]; then
-        runopt="sudo"
+        runopt="sudo"     # using sudo to ensure all user folders are backedup
     else
         runopt=""
     fi
-    # using sudo to ensure all user folders are backedup
+
+    if [[ -f "$DIR/$backupset.exclude" ]]; then # add exclusions if present
+        opts+=(--exclude-from "$DIR/$backupset.exclude")
+    fi
+
     # verbose, archive (-rlptgoD), dont cross file systems and preserve hard links. add -x to not cross file systems
-    echo $runopt rsync -vaH --numeric-ids --exclude-from $DIR/$backupset.exclude --delete --delete-excluded --stats --log-file $log --log-file-format=\"%i %10l %n %L\" --progress --prune-empty-dirs "${opts[@]}" $source/ $destination | tee -a $log
-    $runopt rsync -vaH --numeric-ids --exclude-from $DIR/$backupset.exclude --delete --delete-excluded --stats --log-file $log --log-file-format="%i %10l %n %L" --progress --prune-empty-dirs "${opts[@]}" $source/ $destination 2>$errorlog
+    echo $runopt rsync -vaH --numeric-ids --delete --delete-excluded --stats --log-file $log --log-file-format=\"%i %10l %n %L\" --progress --prune-empty-dirs "${opts[@]}" $source/ $destination | tee -a $log
+    $runopt rsync -vaH --numeric-ids --delete --delete-excluded --stats --log-file $log --log-file-format="%i %10l %n %L" --progress --prune-empty-dirs "${opts[@]}" $source/ $destination 2>$errorlog
 
     if [[ ($? -eq 0) || ($? -eq 24) ]]; then
         #  24     Partial transfer due to vanished source files
@@ -167,6 +171,8 @@ syntheticFullBackup() {
             ssh -n $SERVER "ln -snf $linkdest.$DATE $linkdest; echo $DATE 0 $backupset >> $STATUSLOG"
             echo "$DATE 0 $backupset (sourced from $SERVER:$STATUSLOG)" >> $STATUSLOG
         else
+            # use relative for local backups do the following:
+            #ln -snf $(basename $linkdest.$DATE) $linkdest
             ln -snf $linkdest.$DATE $linkdest
             echo "$DATE 0 $backupset" >> $STATUSLOG
         fi
@@ -433,7 +439,7 @@ checkBackupTime (){
             break
         fi
     done
-    if [[ -z $SERVER ]]; then #grab locally
+    if [[ -z $SERVER && -f $STATUSLOG ]]; then #grab locally
         backup_status_log="$(cat $STATUSLOG)"
     fi
     if [[ -z $backup_status_log ]]; then echo "No record of $backupset"; return; fi

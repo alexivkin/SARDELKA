@@ -36,9 +36,9 @@ if [[ -n $errortext ]]; then
 		echo Sending alert...  | tee -a $log
 		if [[ -n $ALERT_SCRIPT ]]; then
 			$ALERT_SCRIPT "Backup failure alert" "$errortext" $ALERT_EMAIL
-	        else
-	        	echo -e "$errortext" | /usr/bin/mail -v -s "Backup failure alert" $ALERT_EMAIL
-	        fi
+        else
+        	echo -e "$errortext" | /usr/bin/mail -v -s "Backup failure alert" $ALERT_EMAIL
+        fi
 	fi
 fi
 
