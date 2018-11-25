@@ -35,6 +35,11 @@ initBackup() {
     DATE=$(date +%Y-%m-%d.%H-%M-%S)     # date format to use. if you change this make sure the date can be read by 'checkBackupTime()
     echo --------------------------------------------------- >> $log
     if [[ $destURL == "rsync:"* ]]; then  # backing up to remote rsync - use ssh to do remote validation
+        if [[ -z "$(/sbin/ip addr show $IF)" ]]; then
+            echo "*** Misconfiguration: network interface $IF does not exist" | tee -a $log
+            echo $DATE 20 $backupset >> $STATUSLOG
+            return 50
+        fi
         # security validation - check that the router MAC and the server IP match pre-recoded values over the allowed interface
         if [[ -z "$(/sbin/ip addr show $IF to $NETMASK)" ]]; then
             echo "*** Wrong network: $IF is not on $NETMASK" | tee -a $log
