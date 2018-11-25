@@ -1,0 +1,12 @@
+version: '3'
+
+services:
+  sardelka:
+    build: .
+    image: alexivkin/sardelka
+    volumes:
+        - ./backup.config:/sardelka/backup.config
+        - ./backup.schedule:/sardelka/backup.schedule
+        - ./backup.status:/sardelka/backup.status # this is optional, unless you want an easy way to check and edit the status and the dates of the backups
+        - /my/source/folder:/source   # CHANGE ME
+        - /my/backup/folder:/backups  # CHANGE ME

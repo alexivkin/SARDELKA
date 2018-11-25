@@ -1,0 +1,13 @@
+logs/
+oldcode/
+*.exclude
+*.config
+*.schedule
+*.status
+*.list
+.gitignore
+*.include
+*.includeexclude
+*.bak
+*-launcher-as-alex
+*.secrets
