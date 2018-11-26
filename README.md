@@ -11,13 +11,19 @@ Other awesome features:
 
 * Backup of a local system or a remote system through ssh
 * Backup to a local folder, a remote rsync server or a remote Tivoli Storage Management system
-* Monitoring backups to ensure they run on the scheduled time
-* Alert on backup failure, including remote backups that did not come in when they were expected
-* Full backup - a single full rsync copy. There is an option to use secondary folder to move all replaced/deleted files for longer storage.
+* Monitoring backups to ensure they run on the scheduled time. Alert on backup failure, including remote backups that did not come in when they were expected
+* Rotating backups - keep the last n days, or n copies of the backups
+* Shipping out backups to the secondary storage
+* Keeping track of how many files and bytes changed in the backup, and are unique to this backup in the set of backups, to make intelligent calls about removal
+
+Types of the backup supported
+
+* Incremental full backup - aka synthetic full backup, keep full copies hardlinked to each other
+* Full backup - a full rsync copy. There is an option to use secondary folder to move all replaced/deleted files for longer storage
 * Folder backup - tar.gz copy of a folder
 * Configuration backup - system configuration backup - firewall, package and file lists
 
-The only requirement is for the filesystem that will contain backups to support hardlinks.
+The only requirement for Sardelka to work is support for the hardlinks in the filesystem that will contain the backups (most modern FS do).
 
 ## Commands
 
@@ -29,8 +35,9 @@ The only requirement is for the filesystem that will contain backups to support 
 	* What files may not have important information? (what are the most frequently changed files across backups. If a file changes often and is backed up often, it may be less important to keep around all the versions of)
 * backup-cleaner - Remove full synthetic backups intelligently
 	* Remove the partial and zero entropy backups
-	* Remove all folders older than the number of days indicated as the parameter
-	* Remove remove all folders with exclusivity less than or equal to a given percentage
+	* Remove all folders older than the number of days indicated as the parameter,
+	* Remove all but the last N backups
+	* Remove all folders with exclusivity less than or equal to a given percentage
 	* Remove a given list of backups, showing progress
 * backup-monitor - Verify that all scheduled backups completed successfully within the proper timeframe, alert via email if not.
 * backup-ship-out - Move full synthetic backups to another folder or filesystem for longer storage, hardlinking all identical files in the new folder/filesystem.
