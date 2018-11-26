@@ -4,7 +4,7 @@ _**S**uper **A**wesome **R**sync **DE**duplicating and **L**in**K**ing **A**utom
 
 Backup with data de-duplication using nothing but Bash and Rsync. Also does incremental backups and can double as a file integrity monitoring and an intrusion detection tool.
 
-The main feature is that they allow you to take a **Synthetic Full Backups** with Rsync. "Synthetic Full Backup" is a full backup that only takes space required for an incremental backup.
+The main feature is the **synthetic full backups** with Rsync. A _synthetic full backup_ is a full backup that takes only the space required for an incremental backup.
 It does so by using hardlinks for any information that did not change. Essentially you get the best of both worlds: a full backup, always identical to the source at the time when it was taken, and a backup that consumes only the space required for the changes since the last backup.
 
 Other awesome features:
@@ -47,8 +47,9 @@ The only requirement for Sardelka to work is support for the hardlinks in the fi
 
 ### As a docker container
 
-Create a backup.schedule that can can contain only one line: `docker syntheticFullBackup 1 /source,/backups`
-Create a backup.config file that needs to have, at the very least:
+Create the backup.schedule that can can contain only one line: `docker syntheticFullBackup 1 /source,/backups`. This names backups "docker" and runs them daily
+
+Create the backup.config file that needs to have, at the very least:
 ```
 DIR=/sardelka				# dir where all the scripts and configs are
 BACKUPDESTDIR=/backups 			# backup destination
