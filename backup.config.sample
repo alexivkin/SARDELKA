@@ -26,4 +26,5 @@ SSH_CONTROL_SOCKET=$DIR/ssh_control_socket # file handle to control the SSH tunn
 # Backup monitor configuration
 ALERT_TOLERANCE_FACTOR=2 		# multiplication factor for the number of days that the backup has not completed successfuly before invoking the alert script
 ALERT_EMAIL=user@server.tld
+MUA_CMD=(/usr/bin/s-nail -v -s "Backup failure alert") # mail user agent (email send command) and parameters - this one needs sudo apt-get install s-nail and config in /etc/s-nail.rc
 #ALERT_SCRIPT=/path/home/send-email.sh  # script to use for alerting. If not defined then system's mailx will be used
