@@ -72,16 +72,29 @@ Optionally you can expose the logs as `-v /log/folder:/sardelka/logs`
 * Rename backup.config.sample and backup.schedule.sample to backup.config and backup.schedule respectively
 * Edit both files to configure your backups
 * Create .exclude file for each backup, even if it's empty. You can use the included samples for reference
-* Schedule 'backup' to run every day - either plop a symlink into /etc/cron.daily/ or your crontab with crontab -e
-* If you want your backups to be monitored too, schedule backup-monitor to run every day as well
 
-Note: if scheduling as root to backup a user folder, you might need to re-launch backup as a user, e.g.
+## Scheduling periodic backups
+
+To schedule `backup` to run every day either plop a symlink into /etc/cron.daily/ or add it to your crontab with crontab -e. If scheduling as root to backup a user folder, you might need to re-launch backup as a user, e.g.
+
+Note that even though cron or anacron will start your script every day, it will not guarantee daily backups for laptops that you carry with you. Instead you might want to trigger backups when connected to the right network.
+To do that create a script to launch `backup` as yourself by NetworkManager, e.g. `/etc/NetworkManager/dispatcher.d/55BackupLauncher.sh`
 
 `sudo -u user -H /home/user/sardelka/backup`
 
-## Notes
+Then
 
-backup.status shows the status of all past backups. For backups to a remote system the remote backup.status is authoritative, when deciding whether a backup needs to run or not. In that case the local backup.status is just a convinient copy.
+`chmod 755 /etc/NetworkManager/dispatcher.d/55BackupLauncher.sh`
+
+Verify that the proper network is specified in `backup.config` IF, ROUTERIP and ROUTERMAC variables and restart the network manager
+
+`sudo service network-manager restart`
+
+## Monitoring backups
+
+If you want your backups to be monitored, schedule `backup-monitor` to run every day using the same methods outlined above for the `backup` command.
+
+`backup.status` log shows the status of all past backups. For backups to a remote system the remote `backup.status` is authoritative, when deciding whether a new backup is needed or not. The local backup.status is just a convinient copy.
 
 ## Requirements
 

@@ -138,12 +138,12 @@ syntheticFullBackup() {
         fi
         lastfolder=${source##*/}    # trim to the last folder
         if [[ -z $lastfolder ]]; then   # for root just use the name of the system
-            destination=$destURL/$backupset.$DATE
+            destination=$destURL/$backupset.$DATE.inflight
         else
-            destination=$destURL$source.$DATE
+            destination=$destURL$source.$DATE.inflight
         fi
     else
-        destination=$linkdest.$DATE
+        destination=$linkdest.$DATE.inflight
         opts=(--link-dest=$linkdest)
     fi
     if [[ $3 == "sudo" ]]; then
@@ -160,7 +160,8 @@ syntheticFullBackup() {
     echo $runopt rsync -vaH --numeric-ids --delete --delete-excluded --stats --log-file $log --log-file-format=\"%i %10l %n %L\" --progress --prune-empty-dirs "${opts[@]}" $source/ $destination | tee -a $log
     $runopt rsync -vaH --numeric-ids --delete --delete-excluded --stats --log-file $log --log-file-format="%i %10l %n %L" --progress --prune-empty-dirs "${opts[@]}" $source/ $destination 2>$errorlog
 
-    if [[ ($? -eq 0) || ($? -eq 24) ]]; then
+    error=$?
+    if [[ ($error -eq 0) || ($error -eq 24) ]]; then
         #  24     Partial transfer due to vanished source files
         echo "*** $backupset $source backup for $DATE successful" | tee -a $log
         # need to do an absolute soft link because:
@@ -168,24 +169,24 @@ syntheticFullBackup() {
         # this is because rsyncd (the server side) need permissions to set group ownership to match that of the parent folder. you could change rsyncd to run as root to make it go away
         # 2. some further backups to remote systems, like TSM can't work with relative links
         if [[ -n $destURL ]]; then  # backing up to remote rsync
-            ssh -n $SERVER "ln -snf $linkdest.$DATE $linkdest; echo $DATE 0 $backupset >> $STATUSLOG"
+            ssh -n $SERVER "mv $linkdest.$DATE.inflight $linkdest.$DATE; ln -snf $linkdest.$DATE $linkdest; echo $DATE 0 $backupset >> $STATUSLOG"
             echo "$DATE 0 $backupset (sourced from $SERVER:$STATUSLOG)" >> $STATUSLOG
         else
             # use relative for local backups do the following:
             #ln -snf $(basename $linkdest.$DATE) $linkdest
+            mv $linkdest.$DATE.inflight $linkdest.$DATE
             ln -snf $linkdest.$DATE $linkdest
             echo "$DATE 0 $backupset" >> $STATUSLOG
         fi
     else
-        error=$?
         echo "*** $backupset $source backup for $DATE finished with $error" | tee -a $log
         echo "Errors collected during the last run from stderr:" | tee -a $log
         cat $errorlog | tee -a $log
         if [[ -n $destURL ]]; then  # backing up to remote rsync
-            ssh -n $SERVER "mv $linkdest.$DATE $linkdest.$DATE.partial; echo $DATE $error $backupset >> $STATUSLOG"
+            ssh -n $SERVER "mv $linkdest.$DATE.inflight $linkdest.$DATE.partial; echo $DATE $error $backupset >> $STATUSLOG"
             echo "$DATE $error $backupset (sourced from $SERVER:$STATUSLOG)" >> $STATUSLOG
         else
-            mv $linkdest.$DATE $linkdest.$DATE.partial
+            mv $linkdest.$DATE.inflight $linkdest.$DATE.partial
             echo "$DATE $error $backupset" >> $STATUSLOG
         fi
     fi
@@ -221,7 +222,8 @@ fullBackup(){
     # use file system level rsync with advanced error handling
     echo sudo rsync -va --delete --stats --log-file \"$log\" --log-file-format=\"%i %10l %n %L\" --progress "${opts[@]}" \"$source\" \"$destination\" | tee -a $log
     sudo rsync -va --delete --stats --log-file "$log" --log-file-format="%i %10l %n %L" --progress "${opts[@]}" "$source" "$destination" 2>"$errorlog"
-    if [[ ($? -eq 0) || ($? -eq 24) ]]; then
+    error=$?
+    if [[ ($error -eq 0) || ($error -eq 24) ]]; then
         #  24     Partial transfer due to vanished source files - could happen due to a backup of a live system
         echo "*** Full backup for $backupset on $DATE successful" | tee -a "$log"
         if [[ -n $destURL ]]; then  # backing up to remote rsync
@@ -231,7 +233,6 @@ fullBackup(){
             echo $DATE 0 $backupset >>$STATUSLOG
         fi
     else
-        error=$?
         echo "*** Full backup for $backupset on $DATE finished with error $error" | tee -a "$log"
         echo "Errors collected during the last run from stderr:" | tee -a "$log"
         cat "$errorlog" | tee -a "$log"
@@ -252,11 +253,11 @@ folderBackup() {
     dest=$BACKUPDESTDIR/$backupset/$(basename $source).tar.gz
     echo "*** Starting folder back up of $source to $dest on $DATE" | tee -a "$log"
     tar cpzf "$dest" "$source" 1>>"$DIR/$backupset.log" 2>"$errorlog"
-    if [[ $? -eq 0 ]]; then
+    error=$?
+    if [[ $error -eq 0 ]]; then
         echo "*** Folder backup of $source to $dest on $DATE successful" | tee -a "$log"
         echo "$DATE 0 $backupset" >>$STATUSLOG
     else
-        error=$?
         echo "*** Folder backup of $source to $dest on $DATE finished with error $error" | tee -a "$log"
         echo "$DATE $error $backupset" >> $STATUSLOG
         echo "Errors collected during the last run from stderr:" | tee -a "$log"
@@ -306,7 +307,8 @@ configurationBackup(){
             cp $archive $BACKUPDESTDIR/$backupset/
         fi
     fi
-    if [[ $? -eq 0 ]]; then
+    error=$?
+    if [[ $error -eq 0 ]]; then
         #  24     Partial transfer due to vanished source files - could happen due to a backup of a live system
         echo "*** Configuration backup for $system on $DATE successful" | tee -a "$log"
         if [[ -n $destURL ]]; then  # backing up to remote rsync
@@ -319,7 +321,6 @@ configurationBackup(){
         rm $archive
         rmdir $tempdir
     else
-        error=$?
         echo "*** Configuration backup for $backupset on $DATE finished with error $error" | tee -a "$log"
         if [[ -n $destURL ]]; then  # backing up to remote rsync
             ssh -n $SERVER "echo $DATE $error $backupset >> $STATUSLOG"
@@ -380,11 +381,11 @@ tsmBackup() {
     # may need SHELL=/bin/bash and LANG=en_US.UTF-8
     echo Backup started. Please check $log for progress. Long running 'tee' fails when executed from cron hence it can not be used here.
     sudo /usr/bin/nice -n 19 /opt/tivoli/tsm/client/ba/bin/dsmc inc >> $log 2>&1
-    if [[ $? -eq 0 ]]; then
+    error=$?
+    if [[ $error -eq 0 ]]; then
         echo "*** $SERVER backup for $DATE successful" | tee -a $log
         echo $DATE 0 $SERVER  >> $STATUSLOG
     else
-        error=$?
         echo "*** $SERVER backup for $DATE finished with $error" | tee -a $log
         echo $DATE $error $SERVER >> $STATUSLOG
     fi
@@ -443,16 +444,16 @@ checkBackupTime (){
         backup_status_log="$(cat $STATUSLOG)"
     fi
     if [[ -z $backup_status_log ]]; then echo "No record of $backupset"; return; fi
-    lastsuccessraw=$(grep -P "0 $backupset(\s|\r?$)" <<< "$backup_status_log" | tr '\r' ' ' | awk "END{print \$1}") # matches a success, ignoring anything past name of the backup. Matches dos and unix end of lines. tr is to remove effects of \r on the output printout (blanking out line on print)
+    lastsuccessraw=$(grep -P " 0 $backupset(\s|\r?$)" <<< "$backup_status_log" | tr '\r' ' ' | awk "END{print \$1}") # matches a success, ignoring anything past name of the backup. Matches dos and unix end of lines. tr is to remove effects of \r on the output printout (blanking out line on print)
     # You can use comments on the same line or on another line
-        lastsuccess=$(echo $lastsuccessraw | tr . ' ' | awk '{gsub("-",":",$2); print}') # makes the date from the log readable by the 'date' command
-        if [ -z "$lastsuccess" ]; then
-            lastsuccess="1979-06-06 01:01:01" # Never seen a successful backup
-        fi
-        # echo $backupset $lastsuccess >&2
-        if [ $(dateDiff -d "now" $lastsuccess) -gt $daycount ]; then
-            #issuetext=$issuetext"Last successful backup of $backupset happened on $lastsuccess, more than $2 days ago\n"
-            echo "* Last successful backup of $backupset happened on $lastsuccess, more than $daycount day(s) ago"
+    lastsuccess=$(echo $lastsuccessraw | tr . ' ' | awk '{gsub("-",":",$2); print}') # makes the date from the log readable by the 'date' command
+    if [ -z "$lastsuccess" ]; then
+        lastsuccess="1979-06-06 01:01:01" # Never seen a successful backup
+    fi
+    # echo $backupset $lastsuccess >&2
+    if [ $(dateDiff -d "now" $lastsuccess) -gt $daycount ]; then
+        #issuetext=$issuetext"Last successful backup of $backupset happened on $lastsuccess, more than $2 days ago\n"
+        echo "* Last successful backup of $backupset happened on $lastsuccess, more than $daycount day(s) ago"
         #if [ -n "$3" ]; then
         #   # todo grab appropriate parts of a multi-part backup that feeds into the same log
         #   issuetext=$issuetext"Tail of the log:\n\n"$(tail ~/bin/$3)"\n"
@@ -671,26 +672,24 @@ rmWithProgress(){
     # the total number of files/folders to delete is estimated from the previously recorded data by backup-analyzer. If missing the files are counted by 'find'
     if [[ -d "$1" ]]; then
         exclusivity=$(grep $1 $BACKUP_RATINGS | awk '{print $4}')
-        echo -n "$1 ($exclusivity): "
+        echo "Processing $1 ($exclusivity exclusivity):"
         dir=${1%/} # remove trailing slash
         # try to find an entry in backup-analyzer-usage.list - use as the target for PV
         filecount=$(sed -nr "s|.*\/(.*) \(.*$dir|\1|p" $BACKUP_USAGE | tr -d ' ,') # using | sign in sed to avoid issues with / in the full path names affecting the regexp patter. TR removes the thousands delimiter comma and padding
         filespace=$(sed -nr "s|([^/]*).*$dir|\1|p" $BACKUP_USAGE)
         # echo sed -nr "s/.*\/(.*) \(.*$dir/\1/p" ~/bin/backup-analyzer-usage.list $filecount
         if [[ -z $filecount ]]; then
-            echo "Counting files and links..."
-            filecount=$(find $1 \( -type f -o -type l \) -printf '.'|pv|wc -c) # count files and symlinks because to match the backup-analyzer-usage stats. printf is used because it's faster than writing lines
-        fi
-        if [[ -n $filespace ]]; then
-            echo "$filecount files and links taking $filespace." | tee -a $log
-        else
-            echo "$filecount files and links." | tee -a $log
+            filecount=$(find $1 \( -type f -o -type l \) -printf '.'|pv --name "Counting" |wc -c) # count files and symlinks to match the backup-analyzer-usage stats. printf is used because it's faster than writing lines
         fi
         if [[ "$2" == "no" ]]; then
-            echo " Removing ..."
             # verbose removal, pv shows the progres of [-l]ines, with higher bound by [-s] number. The redirect is to swallow rm output, not pv
+            if [[ -n $filespace ]]; then
+                echo "Removing $filecount files and links taking $filespace." | tee -a $log
+            else
+                echo "Removing $filecount files and links." | tee -a $log
+            fi
             # sed is to filter out directory removal notices because the analyzed counts only files, but rm tells about removal of directories
-            rm -vrf $1 | sed '/^removed directory/d' | pv --line-mode --size $filecount > /dev/null
+            rm -vrf $1 | sed '/^removed directory/d' | pv --name "Removing" --line-mode --size $filecount > /dev/null
             if [[ $? -eq 0 ]]; then
                 # remove the record from the file
                 sed -i "\|$1|d" $BACKUP_RATINGS # \| to use | as a pattern separator since $f contains a lot of slashes, [-i] is to remove the line from a file in situ (edit file)
@@ -699,10 +698,10 @@ rmWithProgress(){
                 echo "Error $?"
             fi
         else
-            echo " Ignoring (dry run)..."
+            echo "Ignored (dry run)..."
         fi
     else
-        echo $1 directory is not found
+        echo "$1 directory is not found"
     fi
 }
 
@@ -784,14 +783,14 @@ shipOut (){
             # using the --info option instead of -v to make sure we have a line per-file, even for these that are being hard-linked. -vv is too verbose
             # -z not necessary for the local backup
             rsync -aH --info=copy,name2,skip --remove-source-files --numeric-ids  --log-file $log --log-file-format="%i %10l %n %L" $linkdest $dir/ $BACKUPARCHIVE/$systemname/$archivename 2>$errorlog | pv --line-mode --size $filecount > /dev/null
-            if [[ ($? -eq 0) ]]; then
+            error=$?
+            if [[ ($error -eq 0) ]]; then
                 echo -n "Removing archived backup..."  | tee -a $log
                 find $dir \( -type d -o -type l \) -delete # all files should be already deleted by rsync's --remove-source-files option. Delete remaining symlinks and directories. This is a bit safer approach than sudo rm -rf "$i"
                 echo "done."  | tee -a $log
                 toc=$(date +%s)
                 echo "*** Finished successfully in $((toc-tic)) seconds." | tee -a $log
             else
-                error=$?
                 echo "*** Shipping out of $i finished with the error code $error\n" | tee -a "$log"
                 echo "Error Log:\n$(tail -n 1 $errorlog)"
             fi
