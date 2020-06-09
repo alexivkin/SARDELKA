@@ -10,14 +10,14 @@ set -o pipefail
 
 if [[ $# -eq 0 ]]; then
     echo "Four ways to run"
-    echo " - with \"safe\" as a paramter, which will remove the partial and zero entropy folders as defined in the $BACKUP_RATINGS."
+    echo " - with \"safe\" as a paramter, which will remove the partial and zero entropy folders as defined in the $BACKUP_USAGE."
     echo " - with a number of days as a parameter, which will remove all folders older than the number of days indicated as the parameter."
     echo " - with a number with a plus at the end (eg. 10+), which will remove all backups, except for the most recent N folders."
     echo " - with a percentage as a parameter (eg. 1%), which will remove all folders with exclusivity less than or equal to that percentage"
     echo " - with a list of folders to delete. Either relative to the current folder or absolute paths."
     echo
     echo "Each case uses a dry-run by default. Use -f as the last argument to perform the actual delete. Run with sudo for local host comprehensive backups."
-    echo "This script relies on correct content in $BACKUP_RATINGS. (Re)run backup-analyzer if you are not seeing some of the backups."
+    echo "This script relies on correct content in $BACKUP_USAGE. (Re)run backup-analyzer if you are not seeing some of the backups."
     echo "If a backup ends in .keep it will not be removed even with the -f flag"
     echo
     exit 1
@@ -28,46 +28,57 @@ num_re='^[0-9]+$'
 gt_re='^[0-9]+\+$'
 percent_re='^[0-9]+%$'
 
-#if [[ $# -eq 0 || ($# -eq 1 && "$1" == "-y") ]]; then # [[ $# -gt 1 || ($# -eq 1 && "$1" != "-y") ]]; then
-if [[ $1 == safe ]]; then
+if [[ $1 == safe ]]; then # remove emplty, partial and in-flight backups
     if [[ $2 == "-f" ]]; then
         dryrun=no
-        cp $BACKUP_RATINGS $BACKUP_RATINGS.bak
+        #cp $BACKUP_USAGE $BACKUP_USAGE.bak
     else
-        echo "Dry-run"
+        echo "[!] Dry-run"
     fi
-    echo Removing partial backups...
+    echo "Removing partial, inflight and repeated backups..."
 
     while read -r -a b; do
         #echo -e "Checking $BACKUPDESTDIR/$b..."
-        while read -r -a f; do
-            rmWithProgress $f $dryrun
-        done < <(find $BACKUPDESTDIR/$b/ -type d -maxdepth 1 -name "*.partial")
+        for f in $BACKUPDESTDIR/$b/*.* ; do # dot in the glob is to avoid matching bare 'home' syslinks
+            if [[ "$f" == *.partial || "$f" == *.inflight ]]; then
+                rmWithProgress $f $dryrun
+            else
+                exclusivity=$(sed -nr "s|.*\(\s*(.*)%\)\t$f|\1|p" $BACKUP_USAGE)
+                if [[ -z $exclusivity ]]; then
+                    echo "Exclusivity is not defined for $f. You might need to run backup-analyzer. Skipping."
+                    continue
+                elif [[ $exclusivity -eq 0 ]]; then
+                    rmWithProgress $f $dryrun
+                fi
+            fi
+        done
+        #while read -r -a f; do
+        #    rmWithProgress $f $dryrun
+        #done < <(find $BACKUPDESTDIR/$b/ -type d -maxdepth 1 -name "*.partial" -o -name "*.inflight")
         #echo
     done < <(sed -n 's/^\([^#].*\)\s*syntheticFullBackup.*/\1/p' $DIR/backup.schedule | tr '\r' ' ') # loop over all synthetic full backups. trim \r from the end of the line. you could trim it from the array variable too ${b[0]//[$'\r\n']}
-
 
     #for f in $(grep -e "\.partial" $BACKUP_RATINGS | cut -d " " -f 2); do # use this to just go by the analysis file
     #    rmWithProgress $f $dryrun
     # done
-    echo Removing backups that have no exclusivity in them.
-    for f in $(grep -e "\*\*\*.* 0%" $BACKUP_RATINGS | cut -d " " -f 2); do
-        rmWithProgress $f $dryrun
-    done
+    #echo "Removing backups that have no exclusivity in them."
+    #for f in $(grep -e "\*\*\*.* 0%" $BACKUP_RATINGS | cut -d " " -f 2); do
+    #    rmWithProgress $f $dryrun
+    #done
 
-elif [[ $1 =~ $num_re ]]; then
+elif [[ $1 =~ $num_re ]]; then # remove backups older than N days
     if [[ $2 == "-f" ]]; then
         dryrun=no
-        cp $BACKUP_RATINGS $BACKUP_RATINGS.bak
+        #cp $BACKUP_USAGE $BACKUP_USAGE.bak
     else
-        echo "Dry-run"
+        echo "[!] Dry-run"
     fi
-    echo Removing backups that are older than $(date +%Y-%m-%d -d "$1 days ago")
+    echo "Removing backups that are older than $(date +%Y-%m-%d -d "$1 days ago")"
     # Loop over the actual backups. Could also loop over recorded/analyzed backups but that requires the analysis file to be created ahead of time
     # for f in $(sed 's/\*\*\* \([^ ]*\).*/\1/' $BACKUP_RATINGS); do
     while read -r -a b; do
         #echo -e "Checking $BACKUPDESTDIR/$b..."
-        for f in $BACKUPDESTDIR/$b/* ; do
+        for f in $BACKUPDESTDIR/$b/*.* ; do
             #echo -ne "Checking $f...\r"
             backupdate=$(echo ${f%%.partial} | tr . ' ' | awk '{gsub("-",":",$NF); print $(NF-1),$NF}')     # makes the date from the folder name readable by the 'date' command - removing the .partial prefix if present, and parsing the fields properly, in case there is a dot in the name of the backup
             date -d "$backupdate" >/dev/null 2>&1
@@ -80,44 +91,59 @@ elif [[ $1 =~ $num_re ]]; then
         #echo
     done < <(sed -n 's/^\([^#].*\)\s*syntheticFullBackup.*/\1/p' $DIR/backup.schedule | tr '\r' ' ') # loop over all synthetic full backups. trim \r from the end of the line. you could trim it from the array variable too ${b[0]//[$'\r\n']}
 
-elif [[ $1 =~ $gt_re ]]; then
+elif [[ $1 =~ $gt_re ]]; then # remove all but the latest N of backups
     if [[ $2 == "-f" ]]; then
         dryrun=no
-        cp $BACKUP_RATINGS $BACKUP_RATINGS.bak
+        #cp $BACKUP_USAGE $BACKUP_USAGE.bak
     else
-        echo "Dry-run"
+        echo "[!] Dry-run"
     fi
-    echo Removing all but the $1 most recent backups
+    echo "Removing all but the $1 most recent backups"
     count=${1::-1} # cut the plus sign off
     while read -r -a b; do
         #echo -e "Checking $BACKUPDESTDIR/$b..."
         while read -r -a f; do
-            echo rmWithProgress "$BACKUPDESTDIR/$b/$f" $dryrun
-        done < <(sort <(ls $BACKUPDESTDIR/$b/) | head -n -$count)
+            rmWithProgress "$f" $dryrun
+        done < <(sort <(ls -d $BACKUPDESTDIR/$b/*.*) | head -n -$count)
         #echo
     done < <(sed -n 's/^\([^#].*\)\s*syntheticFullBackup.*/\1/p' $DIR/backup.schedule | tr '\r' ' ') # loop over all synthetic full backups. trim \r from the end of the line. you could trim it from the array variable too ${b[0]//[$'\r\n']}
 
-elif [[ $1 =~ $percent_re ]]; then
+elif [[ $1 =~ $percent_re ]]; then # remove with exclusivity less than or equal to the value
     if [[ $2 == "-f" ]]; then
         dryrun=no
-        cp $BACKUP_RATINGS $BACKUP_RATINGS.bak
+        #cp $BACKUP_USAGE $BACKUP_USAGE.bak
     else
-        echo "Dry-run"
+        echo "[!] Dry-run"
     fi
     percent=${1::-1} # cut the percentage sign off BASH AHOY!
-    echo Removing backups that have exclusivity less than or equal to $percent%.
-    for f in $(grep -e "\*\*\*" $BACKUP_RATINGS | awk -v limit=$percent 'int($4)<=limit {print $2}'); do
-        rmWithProgress $f $dryrun
-    done
+    echo "Removing backups that have exclusivity less than or equal to $percent%."
+    # go over all known backups and lookup exclusivity in the analysis file
+    while read -r -a b; do
+        #echo -e "Checking $BACKUPDESTDIR/$b..."
+        for f in $BACKUPDESTDIR/$b/*.* ; do
+            #echo -ne "Checking $f...\r"
+            exclusivity=$(sed -nr "s|.*\(\s*(.*)%\)\t$f|\1|p" $BACKUP_USAGE)
+            if [[ -z $exclusivity ]]; then
+                echo "Exclusivity is not defined for $f. You might need to run backup-analyzer. Skipping."
+                continue
+            elif [[ $exclusivity -le $percent ]]; then
+                rmWithProgress $f $dryrun
+            fi
+        done
+        #echo
+    done < <(sed -n 's/^\([^#].*\)\s*syntheticFullBackup.*/\1/p' $DIR/backup.schedule | tr '\r' ' ') # loop over all synthetic full backups. trim \r from the end of the line. you could trim it from the array variable too ${b[0]//[$'\r\n']}
+    #for f in $(grep -e "\*\*\*" $BACKUP_RATINGS | awk -v limit=$percent 'int($4)<=limit {print $2}'); do
+    #    rmWithProgress $f $dryrun
+    #done
 
-else
+else # remove specific folders
     folders=( "$@" )
-    if [[ "${!#}" == "-f" ]]; then # last argument is -y
+    if [[ "${!#}" == "-f" ]]; then # if last argument is -f
         dryrun=no
-        cp $BACKUP_RATINGS $BACKUP_RATINGS.bak
-        unset "folders[${#folders[@]}-1]"    # Removes last element
+        #cp $BACKUP_USAGE $BACKUP_USAGE.bak
+        unset "folders[${#folders[@]}-1]"    # Remove the last element ("-f")
     else
-        echo "Dry-run"
+        echo "[!] Dry-run"
     fi
     for f in "${folders[@]}"; do
         rmWithProgress $f $dryrun

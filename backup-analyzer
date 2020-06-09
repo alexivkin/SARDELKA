@@ -8,30 +8,37 @@
 #   What files take the most space in each backup? (what are the N biggest unique files in a backup)
 #   What files may not have important information? (what are the most frequently changed files across backups. If a file changes often and is backed up often, it may be less important to keep around all the versions of)
 
-source "${0%/*}/backup-functions" # load common functions from the same folder as this file
+#set -euo pipefail
 
-echo Analyzing backups. Results will be detailed in the logs:
-echo  - $BACKUP_USAGE
-echo  - $BACKUP_RATINGS
-echo  - $BACKUP_CONTENTS
+realme=$(realpath $0) # dereference if called via a symlink
+source "${realme%/*}/backup-functions" # load common functions from the same folder as this file
+force=${1:-}
+
+echo "Analyzing backups. Results will be detailed in the logs:"
+echo " - $BACKUP_USAGE"
+#echo  - $BACKUP_RATINGS
+echo " - $BACKUP_CONTENTS"
 echo
-echo use -f to force re-scan of all of the existing backups
+echo "Use '-f' to force re-scan of all of the existing backups"
 echo
 DATE=$(date "+%Y-%m-%d at %H:%M:%S") # a more readable format
-if [[ $1 == "-f" ]]; then # start all files from the scratch
-    echo Forcing complete rescan...
-    echo Directory usage calculated on $DATE > $BACKUP_USAGE
-    echo Backup exclusivity rating calculated on $DATE > $BACKUP_RATINGS
-    echo Changed content, sorted by size, calculated on $DATE > $BACKUP_CONTENTS
+if [[ ! -f $BACKUP_USAGE || $force == "-f" ]]; then # start all files from the scratch
+    echo "Complete re-scan."
+    echo "Directory usage calculated on $DATE" > $BACKUP_USAGE
+    #echo "Backup exclusivity rating calculated on $DATE" > $BACKUP_RATINGS
+    echo "Changed content, sorted by size, calculated on $DATE" > $BACKUP_CONTENTS
 else # update file tags
-    echo Scanning new backups. Will start with the last already analyzed backup to collect baseline information...
+    echo "Scanning the new backups. We will start with the last already analyzed backup to collect baseline information..."
     sed -ri "s/Directory usage ([^,]+)(, updated on.*|)/Directory usage \1, updated on $DATE/" $BACKUP_USAGE
-    sed -ri "s/Backup exclusivity rating ([^,]+)(, updated on.*|)/Backup exclusivity rating \1, updated on $DATE/" $BACKUP_RATINGS
+    #sed -ri "s/Backup exclusivity rating ([^,]+)(, updated on.*|)/Backup exclusivity rating \1, updated on $DATE/" $BACKUP_RATINGS
     sed -ri "s/Changed content, sorted by size, ([^,]+)(, updated on.*|)/Changed content, sorted by size, \1, updated on $DATE/" $BACKUP_CONTENTS
 fi
 
 # loop over the syntheticFullBackup's
 while read -r -a b; do
+    if [[ -z "${b[*]}" ]]; then
+	continue
+    fi
     if [[ -n ${b[0]} ]]; then   # if not blank
         if [[ ${b[1]} == "syntheticFullBackup" ]]; then
             analyzeBackup $BACKUPDESTDIR/${b[0]}/

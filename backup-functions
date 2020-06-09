@@ -2,17 +2,18 @@
 # Backup routines
 # 2020 (c) Alex Ivkin
 #
-# TODO remove hardcoded sudo's from some routines (analyze)
+# TODO:
+#    Remove hardcoded sudo's from some functions (e.g. analyze)
 #    Change references from BACKUPDESTDIR to REMOTEDEST for remote backups
 #    Move error handling from each of the backups into a common routine
-#    Add the strict checking as below.
-#set -euo pipefail
+#    Add the strict checking via `set -euo pipefail`
+#       To counter set -u in valid cases of using unassigned variable. Use default values x=${1:-DEFAULT_VALUE}; e.g var=${1:-} to set var blank if $1 is not set
+#       To counter set -e use "|| true" or set +e; command; set -e
+#    Add exit traps function finish { blah }; trap finish EXIT; trap finish SIGHUP SIGINT SIGTERM; # for ctrl-c
 #IFS=$'\n\t'
-# To counter set -u in valid cases of using unassigned variable. Use default values x=${1:-DEFAULT_VALUE}; e.g var=${1:-} to set var blank if $1 is not set
-# To counter set -e use "|| true" or set +e; command; set -e
-# Add exit traps function finish { blah }; trap finish EXIT; trap finish SIGHUP SIGINT SIGTERM; # for ctrl-c
 
-source "${0%/*}/backup.config" # get backup configuration variables
+#source "${0%/*}/backup.config" # get backup configuration variables
+source "${BASH_SOURCE[0]%/*}/backup.config" # get backup configuration variables
 
 initBackup() {
     # Perform basic checks before the backup
@@ -493,26 +494,28 @@ analyzeBackup() {
     declare -a backupdirlist # a list (array) of backups under the current folder
     # fill a regular array because we rely on the order of files in the list
     backupdirlist=($1*) # Fill the array with all subfolders. lack of / between $1 and * is on purpose, so it can work on different directory levels (same level or a subdirectory)
-    logfilelength=$(grep $1 $BACKUP_RATINGS | wc -l )
-    if [[ $logfilelength -ge 1 ]]; then # this means we have existing data to take into account
-        # exclude folders that are already in the log files (we do not need to re-analyze them)
-        j=0
-        for i in "${backupdirlist[@]}" ; do
-            #echo checking $i
-            if grep -q $i $BACKUP_RATINGS; then
-                #echo found $i removing from the list
-                lastknownbackup=$i # keeping track of the last removed entry
-                unset backupdirlist[$j] # remove by index (this works even while we are iterating the array because of bash's copy-on-read)
+    if [[ -f $BACKUP_USAGE ]]; then
+        logfilelength=$(grep $1 $BACKUP_USAGE | wc -l )
+        if [[ $logfilelength -ge 1 ]]; then # this means we have existing data to take into account
+            # exclude folders that are already in the log files (we do not need to re-analyze them)
+            j=0
+            for i in "${backupdirlist[@]}" ; do
+                #echo checking $i
+                if grep -q $i $BACKUP_USAGE; then
+                    #echo found $i removing from the list
+                    lastknownbackup=$i # keeping track of the last removed entry
+                    unset backupdirlist[$j] # remove by index (this works even while we are iterating the array because of bash's copy-on-read)
+                fi
+                ((j++)) # track index because we are dealing with an array
+            done
+            if [[ ${#backupdirlist[@]} -eq 0 ]]; then
+                echo $1: Nothing to do.
+                return
             fi
-            ((j++)) # track index because we are dealing with an array
-        done
-        if [[ ${#backupdirlist[@]} -eq 0 ]]; then
-            echo $1: Nothing to do.
-            return
+            # if this is an update to the already known information then the last existing backup becomes the first reference backup for the update (our backups are full incrementals)
+            # force rescanning of the last backup, so the next one shows ups as a continuation. Insert as the first element
+            backupdirlist=("$lastknownbackup" "${backupdirlist[@]}")
         fi
-        # if this is an update to the already known information then the last existing backup becomes the first reference backup for the update (our backups are full incrementals)
-        # force rescanning of the last backup, so the next one shows ups as a continuation. Insert as the first element
-        backupdirlist=("$lastknownbackup" "${backupdirlist[@]}")
     fi
     echo ----------------------------------------- $1 ----------------------------------------- >> $BACKUP_CONTENTS # visual separator between the backup sets
     #lastbackup=${backupdirlist[$(( ${#backupdirlist[*]} - 1 ))]}
@@ -561,13 +564,13 @@ analyzeBackup() {
         #echo ${#filehash[@]}
         if [[ $totalcount -eq 0 || $totalsize -eq 0 ]]; then
             echo "Empty backup (no files of any kind)"
-            printf "%'6dMB/%'7dMB (%5.2f%%)\t%'8d/%'8d (%5.2f%%)\t$i\n" 0 0 0 0 0 0 >> $BACKUP_USAGE
-            printf "*** %s -  0%% total content. No files\n" $i >> $BACKUP_RATINGS
+            printf "%'7dMB/%'7dMB (%5.2f%%)\t%'8d/%'9d (%5.2f%%)\t%'8d exclusive (%5d%%)\t$i\n" 0 0 0 0 0 0 0 0 >> $BACKUP_USAGE
+            #printf "%-65s ,  0%% total content, no files\n" $i >> $BACKUP_RATINGS
             continue
         fi
         ((totalspace+=uniquesize)) # keep track of the total space used by all unique files in all backups
-        # add symlinks into the total count (sans directories). These produce correct count of files that can be used to see the progress of the rmWithProgress
-        symlinkcount=$(sudo find $i -type l -printf '.' | wc -c)  # prinft and wc -c is faster than wc -l
+        # add symlinks and other files into the total count (sans directories). These produce correct count of files that can be used to see the progress of the rmWithProgress
+        symlinkcount=$(sudo find $i \( ! -type d \) -printf '.' | wc -c)  # prinft and wc -c is faster than wc -l
         ((totalcount+=symlinkcount))
         echo -n "reviewing ..." # ${#filehash[@]}..."
         # reduce the "uniquiness" factor if the file is marked as unique, but it has already appeared as unique in backups before this one.
@@ -582,8 +585,9 @@ analyzeBackup() {
         if [[ -z "$lastknownbackup" || $i != $lastknownbackup ]]; then # we dont need to report on the first backup for updates - it's either the first (100% unique) or the last recorded backup in the $BACKUP_RATINGS file
             # To make the exclusivity heuristic global you need to take the followin code outside of this loop, and build another loop like the one you are in
                 if [[ $uniquecount -ne 0 ]]; then
+                    newcount=$((uniquecount-repeatcount))
                     uniquerating=$(echo "scale=2; 100*(1-$repeatcount/$uniquecount)"|bc -l)
-                    printf "*** %s - %3.0f%% exclusive content (%5d changed files, %5d repeat changes, consuming %'6dMB)\n" $i $uniquerating $uniquecount $repeatcount $(echo "scale=0;$uniquesize/1048576"|bc -l) >> $BACKUP_RATINGS
+                    #printf "%-65s , %3.0f%% exclusive content, %6d changed files, %5d repeat changes, consuming %'7dMB\n" $i $uniquerating $uniquecount $repeatcount $(echo "scale=0;$uniquesize/1048576"|bc -l) >> $BACKUP_RATINGS
                     # save the unique content - note that this skips the first and the last backup. They will always be not deleted, have most unique content (which causes sort to talk every long time) and mostly irrelevant.
                     echo "*** Top $BIGGEST_FILES_NUM biggest unique files in $i, out of $uniquecount unique files" >> $BACKUP_CONTENTS
                     for jj in  $(seq 1 $BIGGEST_FILES_NUM); do # simple {1..$BIGGEST_FILES_NUM} is not supported in bash 4
@@ -599,7 +603,7 @@ analyzeBackup() {
                            break # no other unique files
                         fi
                         # report and remove the current max, so we can go over to the next
-                        printf "%'6dMB %s\n" $(echo "scale=0;$max/1048576"|bc -l) "$name" >> $BACKUP_CONTENTS
+                        printf "%'7dMB %s\n" $(echo "scale=0;$max/1048576"|bc -l) "$name" >> $BACKUP_CONTENTS
                         backuphash[$name]=-1
                     done
                     # show all, sorted by size
@@ -607,19 +611,21 @@ analyzeBackup() {
                     #   printf "%'6dMB %s\n" $(echo "scale=0;${backuphash[$k]}/1048576"|bc -l) "$k"
                     #done | sort -rn >> $BACKUP_CONTENTS # sorting takes looooong time for big file counts (>10k)
                 else
-                    printf "*** %s -   0%% exclusive content. No changed files\n" $i >> $BACKUP_RATINGS
+                    #printf "%-65s ,   0%% exclusive content, no changed files\n" $i >> $BACKUP_RATINGS
+                    newcount=0
+                    uniquerating=0
                 fi
                 fileper=$(echo "scale=2; 100*$uniquecount/$totalcount"|bc -l) # using bc because bash does not do float
                 sizeper=$(echo "scale=2; 100*$uniquesize/$totalsize"|bc -l) # using bc because bash does not do float
-                printf "Total: %'dMB in %'d files. Changes: %'dMB ($sizeper%%) in %'d files ($fileper%%). " $(echo "scale=0;$totalsize/1048576"|bc -l) $totalcount $(echo "scale=0;$uniquesize/1048576"|bc -l) $uniquecount
-                printf "%'6dMB/%'7dMB (%5.2f%%)\t%'8d/%'8d (%5.2f%%)\t$i\n" $(echo "scale=0;$uniquesize/1048576"|bc -l) $(echo "scale=0;$totalsize/1048576"|bc -l) $sizeper $uniquecount $totalcount $fileper >> $BACKUP_USAGE
+                printf "Total: %'dMB in %'d files. Changes: %'dMB ($sizeper%%) in %'d files ($fileper%%). $newcount non-repeating changes ($uniquerating%% exclusivity). " $(echo "scale=0;$totalsize/1048576"|bc -l) $totalcount $(echo "scale=0;$uniquesize/1048576"|bc -l) $uniquecount
+                printf "%'7dMB/%'7dMB (%5.2f%%)\t%'8d/%'9d (%5.2f%%)\t%'8d exclusive (%3.0f%%)\t$i\n" $(echo "scale=0;$uniquesize/1048576"|bc -l) $(echo "scale=0;$totalsize/1048576"|bc -l) $sizeper $uniquecount $totalcount $fileper $newcount $uniquerating >> $BACKUP_USAGE
         fi
         end=`date +%s`
         echo "Took $((end-start)) seconds."
         #if [[ $backupcounter -eq 4 ]]; then break; fi
     done
     # TODO that stats below do NOT include all files. There could be files that are backed up more than once that use more total space than the unique files listed below.
-    # TODO to track all files you'll need a hash that's keyed on an inode, tracking names and sizes for all inodes encountered. Hardlinks point to the same inode, so er just need x biggest inodes
+    # TODO to track all files you'll need a hash that's keyed on an inode, tracking names and sizes for all inodes encountered. Hardlinks point to the same inode, so here just need N biggest inodes
     # TODO this has a complexity of O(n*$TOTAL_SIZE_FILES_NUM). to speed the search build max size array in the original indexing loop O(n)
     printf "Listing top %d unique files with most disk space used..." $TOTAL_SIZE_FILES_NUM
     printf "### Top %d unique files using up most disk space in %s, out of %'dMB used by unique files\n" $TOTAL_SIZE_FILES_NUM $1 $(echo "scale=0;$totalspace/1048576"|bc -l) >> $BACKUP_CONTENTS
@@ -637,7 +643,7 @@ analyzeBackup() {
            break # no other files
         fi
         # report and remove the current max, so we can go over to the next
-        printf "%'6dMB - %s\n"  $(echo "scale=0;$maxnum/1048576"|bc -l) "$name" >> $BACKUP_CONTENTS
+        printf "%'7dMB - %s\n"  $(echo "scale=0;$maxnum/1048576"|bc -l) "$name" >> $BACKUP_CONTENTS
         filespace[$name]=-1 # remove the max to get to the next max
     done
     printf "Listing %d most frequently backed up files..." $FREQUENT_FILES_NUM
@@ -679,34 +685,40 @@ rmWithProgress(){
     # remove a backup folder for a synthetic full backup displaying progress
     # the total number of files/folders to delete is estimated from the previously recorded data by backup-analyzer. If missing the files are counted by 'find'
     if [[ -d "$1" ]]; then
-        exclusivity=$(grep $1 $BACKUP_RATINGS | awk '{print $4}')
-        echo "Processing $1 ($exclusivity exclusivity):"
+        #exclusivity=$(grep $1 $BACKUP_RATINGS | awk '{print $4}')
         dir=${1%/} # remove trailing slash
         # try to find an entry in backup-analyzer-usage.list - use as the target for PV
-        filecount=$(sed -nr "s|.*\/(.*) \(.*$dir|\1|p" $BACKUP_USAGE | tr -d ' ,') # using | sign in sed to avoid issues with / in the full path names affecting the regexp patter. TR removes the thousands delimiter comma and padding
-        filespace=$(sed -nr "s|([^/]*).*$dir|\1|p" $BACKUP_USAGE)
+        #filecount=$(sed -nr "s|.*\/(.*) \(.*$dir|\1|p" $BACKUP_USAGE | tr -d ' ,')
+        # using | sign in sed to avoid issues with / in the full path names affecting the regexp patter. `tr` removes the thousands delimiter comma and padding
+        exclusivity=$(sed -nr "s|.*\(\s*(.*)%\)\t$dir|\1|p" $BACKUP_USAGE)
+        filecount=$(sed -nr "s|[^\t]*\t[^/]*/([^(]*).*\t$dir|\1|p" $BACKUP_USAGE | tr -d ' ,')
+        filespace=$(sed -nr "s|([^/]*).*$dir|\1|p" $BACKUP_USAGE | tr -d ' ,')
         # echo sed -nr "s/.*\/(.*) \(.*$dir/\1/p" ~/bin/backup-analyzer-usage.list $filecount
         if [[ -z $filecount ]]; then
-            filecount=$(find $1 \( -type f -o -type l \) -printf '.'|pv --name "Counting" |wc -c) # count files and symlinks to match the backup-analyzer-usage stats. printf is used because it's faster than writing lines
+            filecount=$(find $1 \( ! -type d \) -printf '.'|pv --name "Listing $1 files" |wc -c) # count files and symlinks to match the backup-analyzer-usage stats. printf is used because it's faster than writing lines
+            #echo "Processing $1 ($filecount files)." #| tee -a $log
+        else
+            echo "Processing $1 ($exclusivity% exclusivity, $filecount files taking $filespace)." #| tee -a $log
         fi
         if [[ "$2" == "no" ]]; then
             # verbose removal, pv shows the progres of [-l]ines, with higher bound by [-s] number. The redirect is to swallow rm output, not pv
-            if [[ -n $filespace ]]; then
-                echo "Removing $filecount files and links taking $filespace." | tee -a $log
-            else
-                echo "Removing $filecount files and links." | tee -a $log
-            fi
+            #if [[ -n $filespace ]]; then
+            #    echo "Removing $filecount files and links taking $filespace." | tee -a $log
+            #else
+            #    echo "Removing $filecount files and links." | tee -a $log
+            #fi
             # sed is to filter out directory removal notices because the analyzed counts only files, but rm tells about removal of directories
             rm -vrf $1 | sed '/^removed directory/d' | pv --name "Removing" --line-mode --size $filecount > /dev/null
             if [[ $? -eq 0 ]]; then
                 # remove the record from the file
-                sed -i "\|$1|d" $BACKUP_RATINGS # \| to use | as a pattern separator since $f contains a lot of slashes, [-i] is to remove the line from a file in situ (edit file)
+                #sed -i "\|$1|d" $BACKUP_RATINGS # \| to use | as a pattern separator since $f contains a lot of slashes, [-i] is to remove the line from a file in situ (edit file)
                 sed -i "\|$1|d" $BACKUP_USAGE   # \| to use | as a pattern separator since $f contains a lot of slashes, [-i] is to remove the line from a file in situ (edit file)
+                echo "done."
             else
-                echo "Error $?"
+                echo "Error $?" #| tee -a $log
             fi
         else
-            echo "Ignored (dry run)..."
+            echo "Ignored (dry run)." #| tee -a $log
         fi
     else
         echo "$1 directory is not found"
@@ -734,27 +746,27 @@ shipOut (){
 
     echo --------------------------------------------------- >> $log
     if [ -d "$1" ]; then
-        exclusivity=$(grep $1 $BACKUP_RATINGS | awk '{print $4}')
-        echo -n "Shipping out $1 ($exclusivity). " | tee -a $log
+        #exclusivity=$(grep $1 $BACKUP_RATINGS | awk '{print $3}')
+        #spacetaken=$(grep $1 $BACKUP_RATINGS | awk '{print $14}')
         dir=${1%/} # remove trailing slash
         # try to find an entry in backup-analyzer-usage.list - use as the target for PV
-        filecount=$(sed -nr "s|.*\/(.*) \(.*$dir|\1|p" $BACKUP_USAGE | tr -d ' ,')
-        filespace=$(sed -nr "s|([^/]*).*$dir|\1|p" $BACKUP_USAGE)
+        exclusivity=$(sed -nr "s|.*\(\s*(.*)%\)\t$dir|\1|p" $BACKUP_USAGE)
+        filecount=$(sed -nr "s|[^\t]*\t[^/]*/([^(]*).*\t$dir|\1|p" $BACKUP_USAGE | tr -d ' ,')
+        filespace=$(sed -nr "s|([^/]*).*$dir|\1|p" $BACKUP_USAGE | tr -d ' ,')
+        if [[ -z $filecount ]]; then
+            echo "Preparing $1 " | tee -a $log
+        else
+            echo "Preparing $1 ($exclusivity%, $filecount files and folders, taking $filespace). " | tee -a $log
+        fi
         if [[ "$2" == "no" ]]; then
+            #((filecount+=3)) # rsync's --info format status lines
             if [[ -z $filecount ]]; then
-                echo "Counting entites ..."
-                filecount=$(find $1 -printf '.'|pv -pte|wc -c) # count everything, since rsync reports on everything (and more)
+                filecount=$(find $1 -printf '.'|pv -te --name "Counting files and folders in $1"|wc -c) # count everything, since rsync reports on everything (and more)
             else
-                echo "Counting folders ..." # add folders back in
-                foldercount=$(find $1 -type d -printf '.'|pv -pte|wc -c) # count everything, since rsync reports on everything (and more)
+                # add folders back in
+                foldercount=$(find $1 -type d -printf '.'|pv -te --name "Counting folders in $1"|wc -c) # add folders back in since they weren't in the filecount metric
                 ((filecount+=foldercount))
             fi
-            if [[ -n $filespace ]]; then
-                echo "$filecount files and folders taking $filespace." | tee -a $log
-            else
-                echo "$filecount files and folders." | tee -a $log
-            fi
-            #((filecount+=3)) # rsync's --info format status lines
 
             # check if it contains no unique data and delete instead of moving
             #uniquefiles=$(sudo find "$i" -type f -links 1 -ls)
@@ -790,12 +802,13 @@ shipOut (){
             echo "Linking with: $linkdest" >> $log # From: $dir/ to: $BACKUPARCHIVE/$systemname/$archivename
             # using the --info option instead of -v to make sure we have a line per-file, even for these that are being hard-linked. -vv is too verbose
             # -z not necessary for the local backup
-            rsync -aH --info=copy,name2,skip --remove-source-files --numeric-ids  --log-file $log --log-file-format="%i %10l %n %L" $linkdest $dir/ $BACKUPARCHIVE/$systemname/$archivename 2>$errorlog | pv --line-mode --size $filecount > /dev/null
+            rsync -aH --info=copy,name2,skip --remove-source-files --numeric-ids  --log-file $log --log-file-format="%i %10l %n %L" $linkdest $dir/ $BACKUPARCHIVE/$systemname/$archivename 2>$errorlog | pv --line-mode --size $filecount --name "Shipping out $dir" > /dev/null
             error=$?
             if [[ ($error -eq 0) ]]; then
                 echo -n "Removing archived backup..."  | tee -a $log
-                find $dir \( -type d -o -type l \) -delete # all files should be already deleted by rsync's --remove-source-files option. Delete remaining symlinks and directories. This is a bit safer approach than sudo rm -rf "$i"
-                echo "done."  | tee -a $log
+                find $dir -delete # all files should be already deleted by rsync's --remove-source-files option. Delete remaining symlinks, pipes and directories. This is a bit safer approach than sudo rm -rf "$i"
+                sed -i "\|$1|d" $BACKUP_USAGE   # \| to use | as a pattern separator since $f contains a lot of slashes, [-i] is to remove the line from a file in situ (edit file)
+                echo "done." | tee -a $log
                 toc=$(date +%s)
                 echo "*** Finished successfully in $((toc-tic)) seconds." | tee -a $log
             else
@@ -803,7 +816,7 @@ shipOut (){
                 echo "Error Log:\n$(tail -n 1 $errorlog)"
             fi
         else
-                echo " Ignoring (dry run)..." | tee -a $log
+            echo "Ignored (dry run)." | tee -a $log
         fi
     else
         echo $1 directory is not found

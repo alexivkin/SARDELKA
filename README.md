@@ -90,11 +90,13 @@ Verify that the proper network is specified in `backup.config` IF, ROUTERIP and 
 
 `sudo service network-manager restart`
 
-## Monitoring backups
+## Monitoring and maintaining backups
 
 If you want your backups to be monitored, schedule `backup-monitor` to run every day using the same methods outlined above for the `backup` command.
 
 `backup.status` log shows the status of all past backups. For backups to a remote system the remote `backup.status` is authoritative, when deciding whether a new backup is needed or not. The local backup.status is just a convinient copy.
+
+It's recommended to run `backup-analyzer` periodically as well, so you do not have to wait for it to recalculate everything before `backup-cleanup` can be used. Recalculating a big backup may take long time. To schedule it add a symlink to /etc/cron.daily.
 
 ## Requirements
 
