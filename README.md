@@ -1,11 +1,13 @@
 # SARDELKA
 
-_**S**uper **A**wesome **R**sync **DE**duplicating and **L**in**K**ing **A**utomation_
+_**S**uper **A**wesome **R**sync **D**eduplicating **E**ncrypting and **L**in**K**ing **A**utomation_
 
 Backup solution for incremental full backups with data de-duplication using nothing but Bash and Rsync.
 
-The main feature is the **synthetic full backups** with Rsync. A _synthetic full backup_ is a full backup that takes only the space required for an incremental backup.
+The main features are the **synthetic full backups** with Rsync and *end-to-end encryption*. A _synthetic full backup_ is a full backup that only the uses the disk space of an incremental backup.
 It does so by using hardlinks for any information that did not change. Essentially you get the best of both worlds: a full backup, always identical to the source at the time when it was taken, and a backup that consumes only the space required for the changes since the last backup.
+
+The _end to end encryption_ is done via just-in-time mounting of remote LUKS encrypted volumes over SSH. The remote system can only sees a sparse encrypted file, so even if these files are leaked there is no way to get the original backup data.
 
 Other awesome features:
 
@@ -20,7 +22,7 @@ Types of the backup supported
 * **Incremental full backup** - aka synthetic full backup, keep full copies hardlinked to each other
 * **Full backup** - a full rsync copy. There is an option to use secondary folder to move all replaced/deleted files for longer storage
 * **Folder backup** - tar.gz copies of a folder
-* **Configuration backup** - system configuration backup - firewall, package and file lists
+* **Configuration backup** - system configuration backup - firewall, package and file/folder lists
 
 ## Commands
 
@@ -39,6 +41,36 @@ Types of the backup supported
 * **backup-monitor** - Verify that all scheduled backups completed successfully within the proper timeframe, alert via email if not.
 * **backup-ship-out** - Move full synthetic backups to another folder or filesystem for longer storage, hardlinking all identical files in the new folder/filesystem.
 * **backup-functions** - not a script, but a bash library, containing code for all backup functions invoked by the scripts above
+
+### How to set up End-to-End encryption
+
+You need three things:
+* ssh user with the private/public key set up on the backup server
+* a (sparse) file on the backup server containing the encrypted filesystem
+* a local LUKs key to decrypt the remote file
+
+Except for the mounting and unmounting the file systems the backup scripts treat it as a local backup.
+
+Specify which server to use and what file to mount like this: `e2ee://[sshalias]/[folder/file]`
+* sshalias is the alias in the `~/.ssh/config` file that specifies which user and key to use to connect to which server for the backup
+* folder/file is the location of the encrypted file on the backup server
+
+To create the encrypted file do the following on the system you want to backup. Do not do it directly on the remote backup server, unless its you really trust it.
+1. Mount the remote server destination over SSHFS to the local server: `sshfs sshalias:/folder /tmp/plain`
+1. Create a sparce file of the size you'd like it to grow to eventually `truncate -s 2T /tmp/plain/file.bak`
+2. Create the encryption key in the location specified by $KEYFILES (defaults to /root/.keyfiles) named exactly the same as the file you just created (e.g. "file.bak")
+```
+sudo dd if=/dev/urandom of=/root/.keyfiles/file.bak bs=4096 count=1
+sudo chmod 600 /root/.keyfiles/file.bak
+```
+2. Format it for LUKS `sudo cryptsetup luksFormat /tmp/plain/file.bak...` setting up a recovery password and add your key `cryptsetup luksAddKey ~/tmp/plain/file.bak ~root/.keyfiles/luks_remote_backups`, or just go all in with `cryptsetup luksFormat ~/tmp/plain/file.bak --key-file ~root/.keyfiles/luks_remote_backups`
+3. Mount and create the filesystem inside it:
+```
+sudo cryptsetup /tmp/plain/file.bak backupfile
+sudo mount /dev/mapper/backupfile /tmp/backups
+sudo mkfs...
+```
+4. Now close everything and give the right access permissions to the right user on the backup server
 
 ## Running
 
@@ -111,4 +143,4 @@ Because KISS and less dependencies. Also because it grew up from a 5 line bash s
 
 * Windows?
 
-No.
+No. But maybe with WLS.

@@ -35,7 +35,7 @@ initBackup() {
     fi
     DATE=$(date +%Y-%m-%d.%H-%M-%S)     # date format to use. if you change this make sure the date can be read by 'checkBackupTime()
     echo "---[$DATE]------------------------------------------------" >> $log
-    if [[ $destURL == "rsync:"* ]]; then  # backing up to remote rsync - use ssh to do remote validation
+    if [[ $destURL == "rsync:"* || $destURL == "e2ee:"* ]]; then  # backing up to remote rsync - use ssh to do remote validation
         if [[ -z "$(/sbin/ip addr show $IF)" ]]; then
             echo "*** Misconfiguration: network interface $IF does not exist" | tee -a $log
             echo "$DATE 20 $backupset # misconfiguration. Network interface $IF does not exists ">> $STATUSLOG
@@ -54,15 +54,21 @@ initBackup() {
             echo "$DATE 51 $backupset # disallowed network. network: $ROUTERIP router MAC is not $ROUTERMAC" >> $STATUSLOG
             return 51
         fi
-        # try the SSH port
-        SERVER=$(sed -e "s/.*@//" -e "s|/.*||" <<< "$destURL")
-        nc -z -w 3 $SERVER 22
+        # parse the server name out of the connection string
+        SERVER=$(sed -r "s|.*//(.*@)?||;s|/.*||"  <<< "$destURL")
+        # now grab the real hostname from what could the SSH alias
+        SERVER_REAL=$(ssh -G octobak | sed -n "s/^hostname //p")
+        nc -z -w 3 $SERVER_REAL 22 # try the SSH port
         if [[ $? -ne 0 ]]; then
             echo "*** Backup server not reachable." | tee -a $log
             echo "$DATE 52 $backupset # can not reach $SERVER" >> $STATUSLOG
             return 52
         fi
-        REMOTEDEST=$(ssh -n $SERVER "sed -ne 's/^BACKUPDESTDIR=\([^ ]*\).*/\1/p' $(dirname $STATUSLOG)/backup.config")
+        if [[ $destURL == "rsync:"* ]]; then # check remote folder for rsync from the config
+            REMOTEDEST=$(ssh -n $SERVER "sed -ne 's/^BACKUPDESTDIR=\([^ ]*\).*/\1/p' $(dirname $STATUSLOG)/backup.config")
+        else
+            REMOTEDEST=$(ssh -n $SERVER "sed -rn 's|.*//[^/]*/(.*)/.*|/\1|p' <<< \"$destURL\"")
+        fi
         if [[ -n $REMOTEDEST ]]; then
             # now do the free space check - first get the backup directory name, then check for space
             ssh -n $SERVER "grep -qs '$REMOTEDEST' /proc/mounts"
@@ -83,7 +89,32 @@ initBackup() {
             echo "$DATE 53 $backupset # can not check free space on the remote disk $REMOTEDEST on $SERVER" >> $STATUSLOG
             return 53
         fi
-        BACKUPDESTDIR=$REMOTEDEST # define BACKUPDESTDIR so that remote backups work.
+        # now start e2ee mounting
+        if [[ $destURL == "e2ee:"* ]]; then
+            echo "Creating sshfs mount to the target server"
+            TEMP_MOUNT=/tmp/$SERVER
+            sudo mkdir $TEMP_MOUNT
+            sudo sshfs $SERVER:/ $TEMP_MOUNT
+            echo "Opening remote file as a local device"
+            E2EE_FILE=$(sed -r "s|.*/||"  <<< "$destURL")
+            sudo cryptsetup luksOpen $TEMP_MOUNT/$E2EE_FILE $E2EE_FILE --key-file $KEYFILES/$E2EE_FILE
+            echo "Mount device to a local filesystem"
+            if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
+                echo "*** $BACKUPDESTDIR is already mounted. Exiting." | tee -a $log
+                echo "$DATE 98 $backupset # backup disk $BACKUPDESTDIR is already mounted" >> $STATUSLOG
+                return 98
+            fi
+            # mount it
+            sudo mount /dev/mapper/$E2EE_FILE $BACKUPDESTDIR
+            freespace=$(df -m "$BACKUPDESTDIR" | awk "NR==2{print \$4}")
+            if [[ $freespace -le $MINSPACE ]]; then
+                echo "*** Backup space is running short. Only $freespace MB left on $BACKUPDESTDIR!. Exiting." | tee -a $log
+                echo "$DATE 95 $backupset # backup free space is under the allowed limit of $freespace MB" >> $STATUSLOG
+                return 95
+            fi
+        else
+            BACKUPDESTDIR=$REMOTEDEST # define BACKUPDESTDIR remote rsync backups, so they can start
+        fi
     else # do local validation
         grep -qs "$BACKUPDESTDIR" /proc/mounts
         if [[ $? -eq 1 ]]; then
@@ -105,17 +136,32 @@ initBackup() {
     return 0
 }
 
+teardownBackup() {
+    # Cleanup e2ee mounts so they are not dangling
+    #destURL=$1
+    if [[ $destURL == "e2ee:"* ]]; then
+        echo "Unmounting $BACKUPDESTDIR"
+        sudo umount $BACKUPDESTDIR
+        echo "Closing remote FS file"
+        E2EE_FILE=$(sed -r "s|.*/||"  <<< "$destURL")
+        sudo cryptsetup luksClose $E2EE_FILE
+        echo "Unmounting SSHFS"
+        sudo fusermount -u $TEMP_MOUNT
+    fi
+}
+
 syntheticFullBackup() {
     # A full backup that uses hardlinks for files that have not changed and only updates these that changed
     # it has the benefits of the full backup but does not waste space or time backing up files that did not change since the last time
     # after the successful backup this backup becomes the basis for the next synthetic backup
     # can backup from a remote systems source = (user@server:~)
     # can backup to a remote rsync system = rsync://rsyncdealer@server/backup/home
+    # can backup to a remote end-to-end encrypted storage = e2ee://backupserver/media/disk/file-with-backups
     # Options
     #   - source folder
     #   - name of the backup folder (single the folder name under the backup disk), or a remote server source folder
     #   - "sudo" for running rsync locally as root
-    #   - (optional) remote rsync url if backing up to a remote system, e.g. rsync://user@server/backup
+    #   - (optional) remote rsync url if backing up to a remote system, e.g. rsync://user@server/backup or the e2ee location
     initBackup $1 "$2" $4
     if [[ $? -ne 0 ]]; then return; fi
     echo "*** Starting the $backupset $source backup for $DATE" | tee -a $log
@@ -128,9 +174,9 @@ syntheticFullBackup() {
         fi
         linkdest=$BACKUPDESTDIR/$backupset/$lastfolder
     fi
-    if [[ -n $destURL ]]; then  # backing up to remote rsync
+    if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync - use ssh to do remote validation
         opts=(--password-file $DIR/$backupset.secrets)
-        SERVER=$(sed -e "s/.*@//" -e "s|/.*||" <<< "$destURL")
+        SERVER=$(sed -r "s|.*//(.*@)?||;s|/.*||"  <<< "$destURL")
         # for some reason symbolic links do not work as remote arguments to the --link-dir option so we have to get it unwrapped into the folder it's pointing to
         LASTBACKUPFULLNAME=$(ssh -n $SERVER "readlink $linkdest")
         if [[ $? -eq 0 ]]; then
@@ -138,7 +184,7 @@ syntheticFullBackup() {
             ssh -n $SERVER "test -e $LASTBACKUPFULLNAME"
             if [[ $? -ne 0 ]]; then
                 echo "Link to the previous backup is broken: $linkdest -> $LASTBACKUPFULLNAME" | tee -a $log
-                echo "If you wish to continue remove the broken link and the full backup will start" | tee -a $log
+                echo "If you wish to continue re-link it to the latest correct backup or remove the broken link to start a complete full backup" | tee -a $log
                 echo "$DATE 69 $backupset # error setting up a remote backup to $SERVER due to a bad symlink to the previous backup" >> $STATUSLOG
                 return
             fi
@@ -152,6 +198,16 @@ syntheticFullBackup() {
             destination=$destURL$source.$DATE.inflight
         fi
     else
+        LASTBACKUPFULLNAME=$(readlink "$linkdest")
+        if [[ $? -eq 0 ]]; then
+            # check if it's a valid folder
+            if [ ! -e "$LASTBACKUPFULLNAME" ]; then
+                echo "Link to the previous backup is broken: $linkdest -> $LASTBACKUPFULLNAME" | tee -a $log
+                echo "If you wish to continue re-link it to the latest correct backup or remove the broken link to start a complete full backup" | tee -a $log
+                echo "$DATE 88 $backupset # error setting up a backup due to a bad symlink to the previous backup" >> $STATUSLOG
+                return
+            fi
+        fi
         destination=$linkdest.$DATE.inflight
         opts=(--link-dest=$linkdest)
     fi
@@ -177,7 +233,7 @@ syntheticFullBackup() {
         # 1. rsync can't use relative links for it's hardlink destination - it gives a rather non descriptive error  "cgrp ... failed: Operation not permitted (1)" error
         # this is because rsyncd (the server side) need permissions to set group ownership to match that of the parent folder. you could change rsyncd to run as root to make it go away
         # 2. some further backups to remote systems, like TSM can't work with relative links
-        if [[ -n $destURL ]]; then  # backing up to remote rsync
+        if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
             ssh -n $SERVER "mv $linkdest.$DATE.inflight $linkdest.$DATE; ln -snf $linkdest.$DATE $linkdest; echo \"$DATE 0 $backupset - successful synthetic full backup from $backupset\" >> $STATUSLOG"
             echo "$DATE 0 $backupset # successful synthetic full backup to $SERVER" >> $STATUSLOG
         else
@@ -191,7 +247,7 @@ syntheticFullBackup() {
         echo "*** $backupset $source backup for $DATE finished with $error" | tee -a $log
         echo "Errors collected during the last run from stderr:" | tee -a $log
         cat $errorlog | tee -a $log
-        if [[ -n $destURL ]]; then  # backing up to remote rsync
+        if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
             ssh -n $SERVER "mv $linkdest.$DATE.inflight $linkdest.$DATE.partial; echo \"$DATE $error $backupset - rsync error during the synthetic full backup from $backupset\" >> $STATUSLOG"
             echo "$DATE $error $backupset # rsync error during the synthetic full backup to $SERVER" >> $STATUSLOG
         else
@@ -199,6 +255,7 @@ syntheticFullBackup() {
             echo "$DATE $error $backupset # rsync error during the synthetic full local backup " >> $STATUSLOG
         fi
     fi
+    teardownBackup
 }
 
 fullBackup(){
@@ -220,9 +277,9 @@ fullBackup(){
     else
         opts=(--delete-excluded --include-from "$DIR/$backupset.include" --exclude-from "$DIR/$backupset.exclude")
     fi
-    if [[ -n $destURL ]]; then  # backing up to remote rsync
+    if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
         opts+=(--password-file $DIR/$backupset.secrets)
-        SERVER=$(sed -e "s/.*@//" -e "s|/.*||" <<< "$destURL")
+        SERVER=$(sed -r "s|.*//(.*@)?||;s|/.*||"  <<< "$destURL")
         destination=$destURL
     else
         destination=$BACKUPDESTDIR/$backupset
@@ -235,7 +292,7 @@ fullBackup(){
     if [[ ($error -eq 0) || ($error -eq 24) ]]; then
         #  24     Partial transfer due to vanished source files - could happen due to a backup of a live system
         echo "*** Full backup for $backupset on $DATE successful" | tee -a "$log"
-        if [[ -n $destURL ]]; then  # backing up to remote rsync
+        if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
             ssh -n $SERVER "echo \"$DATE 0 $backupset - successful full backup from $backupset\" >> $STATUSLOG"
             echo "$DATE 0 $backupset # successful full backup to $SERVER" >> $STATUSLOG
         else
@@ -245,13 +302,14 @@ fullBackup(){
         echo "*** Full backup for $backupset on $DATE finished with error $error" | tee -a "$log"
         echo "Errors collected during the last run from stderr:" | tee -a "$log"
         cat "$errorlog" | tee -a "$log"
-        if [[ -n $destURL ]]; then  # backing up to remote rsync
+        if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
             ssh -n $SERVER "echo \"$DATE $error $backupset # rsync error during the full backup from $backupset\" >> $STATUSLOG"
             echo "$DATE $error $backupset # rsync error during the full backup to $SERVER" >> $STATUSLOG
         else
             echo "$DATE $error $backupset # rsync error during the local backup" >> $STATUSLOG
         fi
     fi
+    teardownBackup
 }
 
 folderBackup() {
@@ -310,7 +368,7 @@ configurationBackup(){
     # zip it all up
     tar zcf $archive ${filelogs[@]} 2>>$errorlog
     if [[ $? -eq 0 ]]; then
-        if [[ -n $destURL ]]; then
+        if [[ -n $destURL && $destURL == "rsync:"* ]]; then
             rsync -va --log-file "$log" --log-file-format="%i %10l %n %L" --password-file $DIR/$backupset.secrets $archive $destURL 2>>"$errorlog"
         else
             cp $archive $BACKUPDESTDIR/$backupset/
@@ -320,7 +378,7 @@ configurationBackup(){
     if [[ $error -eq 0 ]]; then
         #  24     Partial transfer due to vanished source files - could happen due to a backup of a live system
         echo "*** Configuration backup for $system on $DATE successful" | tee -a "$log"
-        if [[ -n $destURL ]]; then  # backing up to remote rsync
+        if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
             ssh -n $SERVER "echo \"$DATE 0 $backupset # successful configuration backup from $backupset\" >> $STATUSLOG"
             echo "$DATE 0 $backupset # successful configuration backup to $SERVER" >> $STATUSLOG
         else
@@ -331,7 +389,7 @@ configurationBackup(){
         rmdir $tempdir
     else
         echo "*** Configuration backup for $backupset on $DATE finished with error $error" | tee -a "$log"
-        if [[ -n $destURL ]]; then  # backing up to remote rsync
+        if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
             ssh -n $SERVER "echo \"$DATE $error $backupset # error during the configuration backup from $backupset\">> $STATUSLOG"
             echo "$DATE $error $backupset # error during the configuration backup to $SERVER" >> $STATUSLOG
         else
@@ -443,7 +501,7 @@ checkBackupTime (){
     for var in "$@"; do # extract server name from the paramteters to detect if we are doing backup to a remote server
         #if [[ $var =~ .*@.*\/.* ]]; then
         if [[ $var == rsync:* ]]; then
-            SERVER=$(sed -e "s/.*@//" -e "s|/.*||" <<< "$var")
+            SERVER=$(sed -r "s|.*//(.*@)?||;s|/.*||"  <<< "$destURL")
             backup_status_log=$(ssh -n $SERVER "cat $STATUSLOG" )     # SSH may eat up stdio, use -n to avoid this. Could also do < /dev/null
             #echo -e $backup_status_log >&2
             break
