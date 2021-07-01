@@ -57,7 +57,7 @@ initBackup() {
         # parse the server name out of the connection string
         SERVER=$(sed -r "s|.*//(.*@)?||;s|/.*||"  <<< "$destURL")
         # now grab the real hostname from what could the SSH alias
-        SERVER_REAL=$(ssh -G octobak | sed -n "s/^hostname //p")
+        SERVER_REAL=$(ssh -TG $SERVER | sed -n "s/^hostname //p")
         nc -z -w 3 $SERVER_REAL 22 # try the SSH port
         if [[ $? -ne 0 ]]; then
             echo "*** Backup server not reachable." | tee -a $log
@@ -91,13 +91,31 @@ initBackup() {
         fi
         # now start e2ee mounting
         if [[ $destURL == "e2ee:"* ]]; then
-            echo "Creating sshfs mount to the target server"
             TEMP_MOUNT=/tmp/$SERVER
-            sudo mkdir $TEMP_MOUNT
-            sudo sshfs $SERVER:/ $TEMP_MOUNT
-            echo "Opening remote file as a local device"
+            if grep -qs "$TEMP_MOUNT" /proc/mounts; then
+                echo "*** $TEMP_MOUNT is already mounted. Please unmount and start again"
+                echo "$DATE 71 $backupset # fs is already mounted to $TEMP_MOUNT" >> $STATUSLOG
+                return 71
+            fi
+            echo "Creating sshfs mount to the target server"
+            sudo mkdir -p $TEMP_MOUNT
+            E2EE_FOLDER=$(sed -r "s|.*//$SERVER/(.*)/.*|/\1|"  <<< "$destURL")
+            sudo sshfs -o allow_other $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT
             E2EE_FILE=$(sed -r "s|.*/||"  <<< "$destURL")
+            if [[ ! -f $TEMP_MOUNT/$E2EE_FILE ]]; then
+                echo "*** $TEMP_MOUNT/$E2EE_FILE file is not found"
+                echo "$DATE 72 $backupset # problem mounting sshfs from $SERVER:$E2EE_FOLDER/ to $TEMP_MOUNT" >> $STATUSLOG
+                return 72
+            fi
+            echo "Opening remote file as a local device"
             sudo cryptsetup luksOpen $TEMP_MOUNT/$E2EE_FILE $E2EE_FILE --key-file $KEYFILES/$E2EE_FILE
+            if [[ ! -e /dev/mapper/$E2EE_FILE ]]; then
+                echo "*** Can't unencrypt and open $TEMP_MOUNT/$E2EE_FILE"
+                echo "Attempting to unmount $TEMP_MOUNT..."
+                sudo fusermount -u "$TEMP_MOUNT"
+                echo "$DATE 73 $backupset # cant luksOpen $TEMP_MOUNT/$E2EE_FILE" >> $STATUSLOG
+                return 73
+            fi
             echo "Mount device to a local filesystem"
             if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
                 echo "*** $BACKUPDESTDIR is already mounted. Exiting." | tee -a $log
