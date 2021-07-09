@@ -164,7 +164,8 @@ teardownBackup() {
         echo "Closing /dev/mapper/$E2EE_FILE..." | tee -a $log
         sudo cryptsetup luksClose $E2EE_FILE
         echo "Unmounting $SERVER:$E2EE_FOLDER/ from $TEMP_MOUNT" | tee -a $log
-        sudo fusermount -u $TEMP_MOUNT
+        fusermount -u $TEMP_MOUNT
+        rmdir $TEMP_MOUNT
     fi
 }
 
