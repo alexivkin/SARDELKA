@@ -92,37 +92,38 @@ initBackup() {
         # now start e2ee mounting
         if [[ $destURL == "e2ee:"* ]]; then
             TEMP_MOUNT=/tmp/$SERVER
+            # first some sanity checks
+            if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
+                echo "*** $BACKUPDESTDIR is already mounted. Unmount and start again" | tee -a $log
+                echo "$DATE 98 $backupset # backup disk $BACKUPDESTDIR is already mounted" >> $STATUSLOG
+                return 98
+            fi
             if grep -qs "$TEMP_MOUNT" /proc/mounts; then
-                echo "*** $TEMP_MOUNT is already mounted. Please unmount and start again"
-                echo "$DATE 71 $backupset # fs is already mounted to $TEMP_MOUNT" >> $STATUSLOG
+                echo "*** $TEMP_MOUNT is already mounted. Please unmount and start again"  | tee -a $log
+                echo "$DATE 71 $backupset # sshfs is already mounted to $TEMP_MOUNT" >> $STATUSLOG
                 return 71
             fi
-            echo "Creating sshfs mount to the target server"
-            sudo mkdir -p $TEMP_MOUNT
+            # now the mounting
+            mkdir -p $TEMP_MOUNT
             E2EE_FOLDER=$(sed -r "s|.*//$SERVER/(.*)/.*|/\1|"  <<< "$destURL")
-            sshfs -o allow_root $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT # need allow_root here because cryptsetup has to run as root to create /dev/mapper devices
             E2EE_FILE=$(sed -r "s|.*/||"  <<< "$destURL")
+            echo "Mounting $SERVER:$E2EE_FOLDER/ via SSHFS to $TEMP_MOUNT..." | tee -a $log
+            sshfs -o allow_root $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT # need allow_root here because cryptsetup has to run as root to create /dev/mapper devices
             if [[ ! -f $TEMP_MOUNT/$E2EE_FILE ]]; then
-                echo "*** $TEMP_MOUNT/$E2EE_FILE file is not found"
+                echo "*** $TEMP_MOUNT/$E2EE_FILE file is not found" | tee -a $log
                 echo "$DATE 72 $backupset # problem mounting sshfs from $SERVER:$E2EE_FOLDER/ to $TEMP_MOUNT" >> $STATUSLOG
                 return 72
             fi
-            echo "Opening remote file as a local device"
-            sudo cryptsetup luksOpen $TEMP_MOUNT/$E2EE_FILE $E2EE_FILE --key-file $KEYFILES/$E2EE_FILE
+            echo "Opening remote file $TEMP_MOUNT/$E2EE_FILE as a local device..." | tee -a $log
+            sudo cryptsetup luksOpen $TEMP_MOUNT/$E2EE_FILE $E2EE_FILE --key-file $KEY_FILES/$E2EE_FILE
             if [[ ! -e /dev/mapper/$E2EE_FILE ]]; then
-                echo "*** Can't unencrypt and open $TEMP_MOUNT/$E2EE_FILE"
-                echo "Attempting to unmount $TEMP_MOUNT..."
+                echo "*** Can't unencrypt and open $TEMP_MOUNT/$E2EE_FILE with $KEY_FILES/$E2EE_FILE" | tee -a $log
+                echo "Attempting to unmount $TEMP_MOUNT..." | tee -a $log
                 sudo fusermount -u "$TEMP_MOUNT"
                 echo "$DATE 73 $backupset # cant luksOpen $TEMP_MOUNT/$E2EE_FILE" >> $STATUSLOG
                 return 73
             fi
-            echo "Mount device to a local filesystem"
-            if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
-                echo "*** $BACKUPDESTDIR is already mounted. Exiting." | tee -a $log
-                echo "$DATE 98 $backupset # backup disk $BACKUPDESTDIR is already mounted" >> $STATUSLOG
-                return 98
-            fi
-            # mount it
+            echo "Mounting /dev/mapper/$E2EE_FILE device to a local filesystem at $BACKUPDESTDIR..." | tee -a $log
             sudo mount /dev/mapper/$E2EE_FILE $BACKUPDESTDIR
             freespace=$(df -m "$BACKUPDESTDIR" | awk "NR==2{print \$4}")
             if [[ $freespace -le $MINSPACE ]]; then
@@ -158,12 +159,11 @@ teardownBackup() {
     # Cleanup e2ee mounts so they are not dangling
     #destURL=$1
     if [[ $destURL == "e2ee:"* ]]; then
-        echo "Unmounting $BACKUPDESTDIR"
+        echo "Unmounting /dev/mapper/$E2EE_FILE from $BACKUPDESTDIR..." | tee -a $log
         sudo umount $BACKUPDESTDIR
-        echo "Closing remote FS file"
-        E2EE_FILE=$(sed -r "s|.*/||"  <<< "$destURL")
+        echo "Closing /dev/mapper/$E2EE_FILE..." | tee -a $log
         sudo cryptsetup luksClose $E2EE_FILE
-        echo "Unmounting SSHFS"
+        echo "Unmounting $SERVER:$E2EE_FOLDER/ from $TEMP_MOUNT" | tee -a $log
         sudo fusermount -u $TEMP_MOUNT
     fi
 }

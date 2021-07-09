@@ -1,0 +1,63 @@
+#!/bin/bash
+# Mount an end-to-end encrypted fs
+
+#set -euo pipefail
+
+realme=$(realpath $0) # dereference if called via a symlink
+source "${realme%/*}/backup-functions" # load common functions from the same folder as this file
+
+BACKUP_LIST=$(sed "s/#.*//" $DIR/backup.schedule | tr '\r' ' ' | grep "e2ee:" | cut -f 1 | tr '\r' ' ')
+
+if [[ $# -eq 0 ]]; then
+    echo -e "Provide a name of the backup and -u if you want to unmount it. The name must be one of:\n$BACKUP_LIST"
+    exit 1
+fi
+
+backup_name=$1
+unmount=${2:-}
+
+destURL=$(sed -nr "s/^${backup_name}\s.*(e2ee:[^ ,]*)/\1/p" $DIR/backup.schedule | head -1 | tr -d '\r' )
+if [[ -z $destURL ]]; then
+    echo -e "It must match one of:\n$BACKUP_LIST"
+    exit 1
+fi
+
+SERVER=$(sed -r "s|.*//(.*@)?||;s|/.*||" <<< "$destURL")
+E2EE_FOLDER=$(sed -r "s|.*//$SERVER/(.*)/.*|/\1|" <<< "$destURL")
+E2EE_FILE=$(sed -r "s|.*/||" <<< "$destURL")
+TEMP_MOUNT=/tmp/$SERVER
+
+if [[ $unmount != "-u" ]]; then
+    if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
+        echo "*** $BACKUPDESTDIR is already mounted."
+        exit 98
+    fi
+    if grep -qs "$TEMP_MOUNT" /proc/mounts; then
+        echo "*** $TEMP_MOUNT is already mounted. Please unmount and start again"
+        exit 71
+    fi
+    mkdir -p $TEMP_MOUNT
+    echo "Mounting $SERVER:$E2EE_FOLDER/ via SSHFS to $TEMP_MOUNT..."
+    sshfs -o allow_root $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT # need allow_root here because cryptsetup has to run as root to create /dev/mapper devices
+    if [[ ! -f $TEMP_MOUNT/$E2EE_FILE ]]; then
+        echo "*** $TEMP_MOUNT/$E2EE_FILE file is not found"
+        exit 72
+    fi
+    echo "Opening remote file $TEMP_MOUNT/$E2EE_FILE as a local device..."
+    sudo cryptsetup luksOpen $TEMP_MOUNT/$E2EE_FILE $E2EE_FILE --key-file $KEY_FILES/$E2EE_FILE
+    if [[ ! -e /dev/mapper/$E2EE_FILE ]]; then
+        echo "*** Can't unencrypt and open $TEMP_MOUNT/$E2EE_FILE with $KEY_FILES/$E2EE_FILE"
+        echo "Attempting to unmount $TEMP_MOUNT..."
+        sudo fusermount -u "$TEMP_MOUNT"
+        exit 73
+    fi
+    echo "Mounting /dev/mapper/$E2EE_FILE device to a local filesystem at $BACKUPDESTDIR..."
+    sudo mount /dev/mapper/$E2EE_FILE $BACKUPDESTDIR
+else
+    echo "Unmounting /dev/mapper/$E2EE_FILE from $BACKUPDESTDIR..."
+    sudo umount $BACKUPDESTDIR
+    echo "Closing /dev/mapper/$E2EE_FILE..."
+    sudo cryptsetup luksClose $E2EE_FILE
+    echo "Unmounting $SERVER:$E2EE_FOLDER/ from $TEMP_MOUNT"
+    sudo fusermount -u $TEMP_MOUNT
+fi
