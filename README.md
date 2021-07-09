@@ -44,33 +44,59 @@ Types of the backup supported
 
 ### How to set up End-to-End encryption
 
-You need three things:
-* ssh user with the private/public key set up on the backup server
+The backup scripts treat end-to-end encrypted backup as local backups, except for the mounting and unmounting the file systems. You need to setup three things for the mounting:
+
+* an ssh user with the private/public key set up on the backup server
 * a (sparse) file on the backup server containing the encrypted filesystem
 * a local LUKs key to decrypt the remote file
 
-Except for the mounting and unmounting the file systems the backup scripts treat it as a local backup.
+#### Setting up the SSH
 
-Specify which server to use and what file to mount like this: `e2ee://[sshalias]/[folder/file]`
-* sshalias is the alias in the `~/.ssh/config` file that specifies which user and key to use to connect to which server for the backup
-* folder/file is the location of the encrypted file on the backup server
+1. Create the ssh key on the system you are backing up with something like `ssh-keygen -t ed25519 -f ~/.ssh/backupserver_backupuser`.
+2. Create the user on the backup server with no password like this `sudo useradd -m -s /bin/bash backupuser`
+3. Create the proper folders, copy the public ssh key to `/.ssh/authorized_keys` and set proper access rights
+```
+sudo mkdir ~backupuser/.ssh
+sudo vi ~backupuser/.ssh/authorized_keys
+sudo chown -R backupuser:backupuser ~backupio/.ssh/
+sudo chmod 700 ~backupuser/.ssh/
+sudo chmod 600 ~backupuser/.ssh/authorized_keys
+```
+4. Create an entry on the system you are backing up in the `~/.ssh/config` like the following
+```
+Host e2eebackup
+	HostName backupserver
+	User backupuser
+	PubkeyAuthentication yes
+	IdentityFile ~/.ssh/octopi_backupionix_ed25519
+```
+5. Login via `ssh e2eebackup` to ensure the server is known to the local ssh
+
+### Setting up the backup storage
 
 To create the encrypted file do the following on the system you want to backup. Do not do it directly on the remote backup server, unless its you really trust it.
-1. Mount the remote server destination over SSHFS to the local server: `sshfs sshalias:/folder /tmp/plain`
-1. Create a sparce file of the size you'd like it to grow to eventually `truncate -s 2T /tmp/plain/file.bak`
-2. Create the encryption key in the location specified by $KEYFILES (defaults to /root/.keyfiles) named exactly the same as the file you just created (e.g. "file.bak")
+
+1. Configure FUSE to allow root to operate on user mounts. This is needed because cryptsetup has to run as root to create /dev/mapper devices. To do this uncomment `user_allow_other` in `/etc/fuse.conf`
+2. Mount the remote server destination over SSHFS to the local server: `sshfs sshalias:/folder /tmp/plain`
+3. Create a sparse file of the size you'd like it to grow to eventually `truncate -s 2T /tmp/plain/file.bak`. Set its ownership to the `backupuser:backupuser` and `chmod 600`
+4. Create an encryption key in the location specified by `KEY_FILES` in `backup.config` (defaults to `/root/.keyfiles`). The key file should be named exactly the same as the file you just created (e.g. "file.bak").
 ```
 sudo dd if=/dev/urandom of=/root/.keyfiles/file.bak bs=4096 count=1
-sudo chmod 600 /root/.keyfiles/file.bak
+sudo chmod 400 /root/.keyfiles/file.bak
 ```
-2. Format it for LUKS `sudo cryptsetup luksFormat /tmp/plain/file.bak...` setting up a recovery password and add your key `cryptsetup luksAddKey ~/tmp/plain/file.bak ~root/.keyfiles/luks_remote_backups`, or just go all in with `cryptsetup luksFormat ~/tmp/plain/file.bak --key-file ~root/.keyfiles/luks_remote_backups`
-3. Mount and create the filesystem inside it:
+5. Format it for LUKS `sudo cryptsetup luksFormat /tmp/plain/file.bak...` setting up a recovery password and add your key `cryptsetup luksAddKey ~/tmp/plain/file.bak /root/.keyfiles/luks_remote_backups`, or just go all in with `cryptsetup luksFormat ~/tmp/plain/file.bak --key-file /root/.keyfiles/luks_remote_backups`
+6. Mount and create the filesystem inside it:
 ```
-sudo cryptsetup /tmp/plain/file.bak backupfile
-sudo mount /dev/mapper/backupfile /tmp/backups
-sudo mkfs...
+sudo cryptsetup luksOpen /mnt/backup-host/backup-file.luks --key-file /root/luks/backupstore.key backup-partition
+sudo mkfs.ext4 -m0 -E lazy_itable_init=0,lazy_journal_init=0 /dev/mapper/backup-partition
+sudo mount /dev/mapper/backup-partition /tmp/remote-backup
 ```
-4. Now close everything and give the right access permissions to the right user on the backup server
+7. Now close everything.
+
+Edit `backup.schedule` and specify which server to use and what file to mount like this: `e2ee://[sshalias]/[folder/file]`
+
+* `sshalias` is the host alias in the `~/.ssh/config` file that specifies which user and key to use to connect to which server for the backup
+* folder/file is the location of the encrypted file on the backup server
 
 ## Running
 

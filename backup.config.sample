@@ -22,6 +22,7 @@ ROUTERMAC="00:11:22:aa:bb:cc" 		# expected router MAC address
 NETMASK="192.168.1.0/24" 		# expected network
 WOL_MAC="00:11:22:aa:bb:cc"		# MAC address of the remote server, if you want to try to send wake on lan packets to it when it is down
 SSH_CONTROL_SOCKET=$DIR/ssh_control_socket # file handle to control the SSH tunnel with
+KEY_FILES=/root/.keyfiles
 
 # Backup monitor configuration
 ALERT_TOLERANCE_FACTOR=2 		# multiplication factor for the number of days that the backup has not completed successfuly before invoking the alert script

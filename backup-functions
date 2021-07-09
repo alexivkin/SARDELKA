@@ -100,7 +100,7 @@ initBackup() {
             echo "Creating sshfs mount to the target server"
             sudo mkdir -p $TEMP_MOUNT
             E2EE_FOLDER=$(sed -r "s|.*//$SERVER/(.*)/.*|/\1|"  <<< "$destURL")
-            sudo sshfs -o allow_other $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT
+            sshfs -o allow_root $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT # need allow_root here because cryptsetup has to run as root to create /dev/mapper devices
             E2EE_FILE=$(sed -r "s|.*/||"  <<< "$destURL")
             if [[ ! -f $TEMP_MOUNT/$E2EE_FILE ]]; then
                 echo "*** $TEMP_MOUNT/$E2EE_FILE file is not found"
