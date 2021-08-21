@@ -6,6 +6,7 @@ BACKUPDESTDIR=/media/Backups 		# backup destination
 BACKUPARCHIVE=/media/BackupsArchives 	# define this variable if you want to archive old backups to a secondary location after certain time
 STATUSLOG=$DIR/backup.status 		# common log where status for all backups is kept
 MINSPACE=10000 				# minimum free space before aborting a backup, in megabytes
+GUI_PROMPT=true				# show notices on the X screen. Requires to apt install libnotify-bin
 
 # Backup analyzer configuration
 BACKUP_RATINGS=$DIR/backup-analyzer-ratings.list

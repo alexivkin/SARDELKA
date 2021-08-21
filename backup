@@ -3,6 +3,20 @@
 
 source "${0%/*}/backup-functions" # load common functions from the same folder as this file
 
+function notify-gui() {
+    local display=":$(ls /tmp/.X11-unix/* | sed 's#/tmp/.X11-unix/X##' | head -n 1)"
+    if [[ -z $display ]]; then
+        return
+    fi
+    local user=$(who | grep '('$display')' | awk '{print $1}' | head -n 1)
+    if [[ -z $user ]]; then
+        return
+    fi
+    local uid=$(id -u $user)
+    # Requires to apt install libnotify-bin
+    sudo -u $user DISPLAY=$display DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus notify-send "$@"
+}
+
 echo "Starting backup processing..."
 errortext=""
 while read -r -a b; do
@@ -16,9 +30,15 @@ while read -r -a b; do
 		if [[ -n $timecheck ]]; then
 		   if [[ ${parms[0]} != "remote" ]]; then
     			echo "Launching ${b[1]} ${b[0]} ${parms[@]} ..."
+                if [[ $GUI_PROMPT ]]; then
+                    notify-gui "Launching ${b[1]} ${b[0]} ..."
+                fi
 		    	${b[1]} ${b[0]} "${parms[@]}"	# launch the backup command. Meed to use this syntax so the array expands correctly into individual parameters
 	            # after everything is done, check that it was done properly
 		        validate=$(checkBackupTime ${b[0]} ${b[2]} "${parms[@]}") # check again to record any errors
+                if [[ $GUI_PROMPT ]]; then
+                    notify-gui "Backup done: ${validate}"
+                fi
 				if [[ -n $validate ]]; then
     				if [[ -n $errortext ]]; then
 	    				errortext="$errortext\n$validate"

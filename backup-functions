@@ -21,7 +21,7 @@ initBackup() {
     # Options
     #   - name of the backup set
     #   - name of the source folder
-    #   - (optional) url of a remote rsyncd
+    #   - (optional) url of a remote rsyncd or the e2ee backup server
     # Results
     #   sets "backupset", "log", destURL variables
     #   returns error number if short on space or other errors encountered
@@ -160,11 +160,19 @@ teardownBackup() {
     #destURL=$1
     if [[ $destURL == "e2ee:"* ]]; then
         echo "Unmounting /dev/mapper/$E2EE_FILE from $BACKUPDESTDIR..." | tee -a $log
-        sudo umount $BACKUPDESTDIR
+        sudo umount "$BACKUPDESTDIR" | tee -a $log
+        if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
+            echo "*** Failed to unmount $BACKUPDESTDIR."  | tee -a $log
+        fi
         echo "Closing /dev/mapper/$E2EE_FILE..." | tee -a $log
-        sudo cryptsetup luksClose $E2EE_FILE
-        echo "Unmounting $SERVER:$E2EE_FOLDER/ from $TEMP_MOUNT" | tee -a $log
-        fusermount -u $TEMP_MOUNT
+        sudo cryptsetup luksClose $E2EE_FILE  | tee -a $log
+        if [[ -e /dev/mapper/$E2EE_FILE ]]; then
+            echo "*** Can't close $E2EE_FILE" | tee -a $log
+        fi
+        # wait a sec before unmount cause cryptsetup may take a little while for remote FS
+        sleep 1
+        echo "Unmounting $SERVER:$E2EE_FOLDER/ from $TEMP_MOUNT..." | tee -a $log
+        fusermount -u "$TEMP_MOUNT" | tee -a $log
         rmdir $TEMP_MOUNT
     fi
 }
@@ -261,6 +269,9 @@ syntheticFullBackup() {
             mv $linkdest.$DATE.inflight $linkdest.$DATE
             ln -snf $linkdest.$DATE $linkdest
             echo "$DATE 0 $backupset # successful synthetic full local backup" >> $STATUSLOG
+            if [[ $destURL == "e2ee:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
+                echo "$DATE 0 $backupset" >> $TEMP_MOUNT/status
+            fi
         fi
     else
         echo "*** $backupset $source backup for $DATE finished with $error" | tee -a $log
@@ -272,6 +283,9 @@ syntheticFullBackup() {
         else
             mv $linkdest.$DATE.inflight $linkdest.$DATE.partial
             echo "$DATE $error $backupset # rsync error during the synthetic full local backup " >> $STATUSLOG
+            if [[ $destURL == "e2ee:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
+                echo "$DATE $error $backupset" >> $TEMP_MOUNT/status
+            fi
         fi
     fi
     teardownBackup
@@ -316,6 +330,9 @@ fullBackup(){
             echo "$DATE 0 $backupset # successful full backup to $SERVER" >> $STATUSLOG
         else
             echo "$DATE 0 $backupset # successful full local backup"  >>$STATUSLOG
+            if [[ $destURL == "e2ee:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
+                echo "$DATE 0 $backupset" >> $TEMP_MOUNT/status
+            fi
         fi
     else
         echo "*** Full backup for $backupset on $DATE finished with error $error" | tee -a "$log"
@@ -326,6 +343,9 @@ fullBackup(){
             echo "$DATE $error $backupset # rsync error during the full backup to $SERVER" >> $STATUSLOG
         else
             echo "$DATE $error $backupset # rsync error during the local backup" >> $STATUSLOG
+            if [[ $destURL == "e2ee:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
+                echo "$DATE $error $backupset" >> $TEMP_MOUNT/status
+            fi
         fi
     fi
     teardownBackup
@@ -373,9 +393,9 @@ configurationBackup(){
     shift
     # export list of files/folders to log files
     filelogs=(${configlog#$tempdir/}) # start with the config log we just created, trim the unecessary folder structure
-    destURL="" # we'll try to find the rsync mixed in with the options
+    destURL="" # we'll try to find the "rsync" or "e2ee" inside the options argument
     for var in "$@"; do
-        if [[ $var == "rsync:"* ]]; then # a remote backup option
+        if [[ $var == "rsync:"* || $var == "e2ee:"* ]]; then # a remote backup option
             destURL=$var
             continue
         fi
@@ -402,6 +422,9 @@ configurationBackup(){
             echo "$DATE 0 $backupset # successful configuration backup to $SERVER" >> $STATUSLOG
         else
             echo "$DATE 0 $backupset # successful local configuration backup" >>$STATUSLOG
+            if [[ $destURL == "e2ee:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
+                echo "$DATE 0 $backupset" >> $TEMP_MOUNT/status
+            fi
         fi
         rm ${filelogs[@]}
         rm $archive
@@ -413,11 +436,14 @@ configurationBackup(){
             echo "$DATE $error $backupset # error during the configuration backup to $SERVER" >> $STATUSLOG
         else
             echo "$DATE $error $backupset # error during the local configuration backup " >> $STATUSLOG
+            if [[ $destURL == "e2ee:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
+                echo "$DATE $error $backupset" >> $TEMP_MOUNT/status
+            fi
         fi
         echo "Errors collected during the last run from stderr:" | tee -a "$log"
         cat "$errorlog" | tee -a "$log"
     fi
-    #popd
+    teardownBackup
 }
 
 tsmBackup() {
@@ -504,7 +530,7 @@ dateDiff (){
 
 checkBackupTime (){
     # check if the backups completed successfuly within the past N days
-    # this function returns error string by printing it to stdout, NO OTHER echos are allowed
+    # this function returns error string by printing it to stdout, *** NO OTHER ECHOS ARE ALLOWED ***
     # options
     #   - backup name
     #   - number of days allowed (not to exceed)

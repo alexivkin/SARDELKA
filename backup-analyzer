@@ -37,7 +37,7 @@ fi
 # loop over the syntheticFullBackup's
 while read -r -a b; do
     if [[ -z "${b[*]}" ]]; then
-	continue
+        continue
     fi
     if [[ -n ${b[0]} ]]; then   # if not blank
         if [[ ${b[1]} == "syntheticFullBackup" ]]; then

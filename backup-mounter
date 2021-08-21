@@ -56,8 +56,17 @@ if [[ $unmount != "-u" ]]; then
 else
     echo "Unmounting /dev/mapper/$E2EE_FILE from $BACKUPDESTDIR..."
     sudo umount $BACKUPDESTDIR
+    if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
+        echo "*** Failed to unmount $BACKUPDESTDIR."
+        exit 98
+    fi
     echo "Closing /dev/mapper/$E2EE_FILE..."
     sudo cryptsetup luksClose $E2EE_FILE
+    if [[ -e /dev/mapper/$E2EE_FILE ]]; then
+        echo "*** Can't close $E2EE_FILE"
+        exit 73
+    fi
+    sleep 1
     echo "Unmounting $SERVER:$E2EE_FOLDER/ from $TEMP_MOUNT"
     sudo fusermount -u $TEMP_MOUNT
 fi
