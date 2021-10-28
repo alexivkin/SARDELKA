@@ -92,7 +92,9 @@ initBackup() {
         # now start e2ee mounting
         if [[ $destURL == "e2ee:"* ]]; then
             TEMP_MOUNT=/tmp/$SERVER
-            # first some sanity checks
+            E2EE_FOLDER=$(sed -r "s|.*//$SERVER/(.*)/.*|/\1|"  <<< "$destURL")
+            E2EE_FILE=$(sed -r "s|.*/||"  <<< "$destURL")
+            # first some sanity checks for the local FS
             if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
                 echo "*** $BACKUPDESTDIR is already mounted. Unmount and start again" | tee -a $log
                 echo "$DATE 98 $backupset # backup disk $BACKUPDESTDIR is already mounted" >> $STATUSLOG
@@ -103,10 +105,22 @@ initBackup() {
                 echo "$DATE 71 $backupset # sshfs is already mounted to $TEMP_MOUNT" >> $STATUSLOG
                 return 71
             fi
+            # sanity checks for the remote FS
+            ssh -n $SERVER "grep -qs '$E2EE_FOLDER' /proc/mounts"
+            if [[ $? -eq 1 ]]; then
+                echo "*** Remote backup disk $E2EE_FOLDER is not mounted on $SERVER. Exiting." | tee -a $log
+                echo "$DATE 99 $backupset # remote backup disk $E2EE_FOLDER is not mounted on $SERVER." >> $STATUSLOG
+                return 99
+            fi
+            # backupdestdir would not be defined when using rsync URL
+            freespace=$(ssh -n $SERVER "df -m \"$E2EE_FOLDER\"" | awk "NR==2{print \$4}")
+            if [[ $freespace -le $MINSPACE ]]; then
+                echo "*** Remote backup space is running short. Only $freespace MB left on $E2EE_FOLDER!. Exiting." | tee -a $log
+                echo "$DATE 95 $backupset # remoe backup free space on $SERVER is under the allowed limit of $freespace MB" >> $STATUSLOG
+                return 95
+            fi
             # now the mounting
             mkdir -p $TEMP_MOUNT
-            E2EE_FOLDER=$(sed -r "s|.*//$SERVER/(.*)/.*|/\1|"  <<< "$destURL")
-            E2EE_FILE=$(sed -r "s|.*/||"  <<< "$destURL")
             echo "Mounting $SERVER:$E2EE_FOLDER/ via SSHFS to $TEMP_MOUNT..." | tee -a $log
             sshfs -o allow_root $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT # need allow_root here because cryptsetup has to run as root to create /dev/mapper devices
             if [[ ! -f $TEMP_MOUNT/$E2EE_FILE ]]; then
@@ -270,7 +284,9 @@ syntheticFullBackup() {
             ln -snf $linkdest.$DATE $linkdest
             echo "$DATE 0 $backupset # successful synthetic full local backup" >> $STATUSLOG
             if [[ $destURL == "e2ee:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
-                echo "$DATE 0 $backupset" >> $TEMP_MOUNT/status
+                if grep -qs "$TEMP_MOUNT" /proc/mounts; then  # check if $TEMP_MOUNT is still mounted otherwise writing a file there will pollute the mount point
+                    echo "$DATE 0 $backupset" >> $TEMP_MOUNT/status
+                fi
             fi
         fi
     else
@@ -284,7 +300,9 @@ syntheticFullBackup() {
             mv $linkdest.$DATE.inflight $linkdest.$DATE.partial
             echo "$DATE $error $backupset # rsync error during the synthetic full local backup " >> $STATUSLOG
             if [[ $destURL == "e2ee:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
-                echo "$DATE $error $backupset" >> $TEMP_MOUNT/status
+                if grep -qs "$TEMP_MOUNT" /proc/mounts; then  # check if $TEMP_MOUNT is still mounted otherwise writing a file there will pollute the mount point
+                    echo "$DATE $error $backupset" >> $TEMP_MOUNT/status
+                fi
             fi
         fi
     fi
@@ -331,7 +349,9 @@ fullBackup(){
         else
             echo "$DATE 0 $backupset # successful full local backup"  >>$STATUSLOG
             if [[ $destURL == "e2ee:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
-                echo "$DATE 0 $backupset" >> $TEMP_MOUNT/status
+                if grep -qs "$TEMP_MOUNT" /proc/mounts; then  # check if $TEMP_MOUNT is still mounted otherwise writing a file there will pollute the mount point
+                    echo "$DATE 0 $backupset" >> $TEMP_MOUNT/status
+                fi
             fi
         fi
     else
@@ -344,7 +364,9 @@ fullBackup(){
         else
             echo "$DATE $error $backupset # rsync error during the local backup" >> $STATUSLOG
             if [[ $destURL == "e2ee:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
-                echo "$DATE $error $backupset" >> $TEMP_MOUNT/status
+                if grep -qs "$TEMP_MOUNT" /proc/mounts; then  # check if $TEMP_MOUNT is still mounted otherwise writing a file there will pollute the mount point
+                    echo "$DATE $error $backupset" >> $TEMP_MOUNT/status
+                fi
             fi
         fi
     fi
@@ -437,7 +459,9 @@ configurationBackup(){
         else
             echo "$DATE $error $backupset # error during the local configuration backup " >> $STATUSLOG
             if [[ $destURL == "e2ee:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
-                echo "$DATE $error $backupset" >> $TEMP_MOUNT/status
+                if grep -qs "$TEMP_MOUNT" /proc/mounts; then  # check if $TEMP_MOUNT is still mounted otherwise writing a file there will pollute the mount point
+                    echo "$DATE $error $backupset" >> $TEMP_MOUNT/status
+                fi
             fi
         fi
         echo "Errors collected during the last run from stderr:" | tee -a "$log"

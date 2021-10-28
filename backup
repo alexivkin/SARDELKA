@@ -20,39 +20,43 @@ function notify-gui() {
 echo "Starting backup processing..."
 errortext=""
 while read -r -a b; do
-	if [[ -n ${b[0]} ]]; then	# if not blank
-		if [[ -n ${b[3]} ]]; then
-			IFS=',' read -r -a parms <<< "${b[@]:3}" # split params by a comma
-		else
-			parms=()
-		fi
-		timecheck=$(checkBackupTime ${b[0]} ${b[2]} "${parms[@]}") # check if it's the time for it to run, params define if we need to check logs on a remote systems
-		if [[ -n $timecheck ]]; then
-		   if [[ ${parms[0]} != "remote" ]]; then
-    			echo "Launching ${b[1]} ${b[0]} ${parms[@]} ..."
+    if [[ -n ${b[0]} ]]; then   # if not blank
+        if [[ -n ${b[3]} ]]; then
+            IFS=',' read -r -a parms <<< "${b[@]:3}" # split params by a comma
+        else
+            parms=()
+        fi
+        timecheck=$(checkBackupTime ${b[0]} ${b[2]} "${parms[@]}") # check if it's the time for it to run, params define if we need to check logs on a remote systems
+        if [[ -n $timecheck ]]; then
+           if [[ ${parms[0]} != "remote" ]]; then
+                echo "Launching ${b[1]} ${b[0]} ${parms[@]} ..."
                 if [[ $GUI_PROMPT ]]; then
                     notify-gui "Launching ${b[1]} ${b[0]} ..."
                 fi
-		    	${b[1]} ${b[0]} "${parms[@]}"	# launch the backup command. Meed to use this syntax so the array expands correctly into individual parameters
-	            # after everything is done, check that it was done properly
-		        validate=$(checkBackupTime ${b[0]} ${b[2]} "${parms[@]}") # check again to record any errors
+                ${b[1]} ${b[0]} "${parms[@]}"   # launch the backup command. Meed to use this syntax so the array expands correctly into individual parameters
+                # after everything is done, check that it was done properly
+                validate=$(checkBackupTime ${b[0]} ${b[2]} "${parms[@]}") # check again to record any errors
                 if [[ $GUI_PROMPT ]]; then
-                    notify-gui "Backup done: ${validate}"
+                    if [[ -n $validate ]]; then
+                        notify-gui "Backup error: ${validate}"
+                    else
+                        notify-gui "Backup completed without errors."
+                    fi
                 fi
-				if [[ -n $validate ]]; then
-    				if [[ -n $errortext ]]; then
-	    				errortext="$errortext\n$validate"
-		    	    else
-			    	    errortext=$validate
-				    fi
-	    	    fi
-		    fi
-	    fi
-	fi
+                if [[ -n $validate ]]; then
+                    if [[ -n $errortext ]]; then
+                        errortext="$errortext\n$validate"
+                    else
+                        errortext=$validate
+                    fi
+                fi
+            fi
+        fi
+    fi
 done < <(sed "s/#.*//" $DIR/backup.schedule | tr '\r' ' ') # trim everything after a hash (i.e comments). trim \r from the end of the line. you could trim it from the array variable too ${b[0]//[$'\r\n']}
 
 if [[ -n $errortext ]]; then
-	echo -e "Errors encountered:\n$errortext"
+    echo -e "Errors encountered:\n$errortext"
 fi
 
 echo "done."
