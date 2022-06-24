@@ -35,24 +35,27 @@ initBackup() {
     fi
     DATE=$(date +%Y-%m-%d.%H-%M-%S)     # date format to use. if you change this make sure the date can be read by 'checkBackupTime()
     echo "---[$DATE]------------------------------------------------" >> $log
-    if [[ $destURL == "rsync:"* || $destURL == "e2ee:"* ]]; then  # backing up to remote rsync - use ssh to do remote validation
-        if [[ -z "$(/sbin/ip addr show $IF)" ]]; then
+    if [[ $destURL == "rsync:"* || $destURL == "e2ee:"* ]]; then  # backing up to remote rsync or via ssh - use ssh to do remote validation
+        # security validation - check if we're backing up over the correct interface set for the defined network
+        if [[ -n $IF && -z "$(/sbin/ip addr show $IF)" ]]; then
             echo "*** Misconfiguration: network interface $IF does not exist" | tee -a $log
             echo "$DATE 20 $backupset # misconfiguration. Network interface $IF does not exists ">> $STATUSLOG
             return 50
+            if [[ -z "$(/sbin/ip addr show $IF to $NETMASK)" ]]; then
+                echo "*** Disallowed network: $IF is not on $NETMASK" | tee -a $log
+                echo "$DATE 50 $backupset # disallowed network. $IF is not on $NETMASK" >> $STATUSLOG
+                return 50
+            fi
         fi
-        # security validation - check that the router MAC and the server IP match pre-recoded values over the allowed interface
-        if [[ -z "$(/sbin/ip addr show $IF to $NETMASK)" ]]; then
-            echo "*** Disallowed network: $IF is not on $NETMASK" | tee -a $log
-            echo "$DATE 50 $backupset # disallowed network. $IF is not on $NETMASK" >> $STATUSLOG
-            return 50
-        fi
-        # fill in the arp cache by pinging once
-        ping -c 1 $ROUTERIP 1>/dev/null
-        if [[ -z "$(arp -a $ROUTERIP | grep $ROUTERMAC)" ]]; then
-            echo "*** Wrong network: $ROUTERIP router MAC is not $ROUTERMAC" | tee -a $log
-            echo "$DATE 51 $backupset # disallowed network. network: $ROUTERIP router MAC is not $ROUTERMAC" >> $STATUSLOG
-            return 51
+        # security validation - check that the (router) MAC if the given (router) IP is correct
+        if [[ -n $ROUTERIP ]]; then
+            # fill in the arp cache by pinging once
+            ping -c 1 $ROUTERIP 1>/dev/null
+            if [[ -z "$(arp -a $ROUTERIP | grep $ROUTERMAC)" ]]; then
+                echo "*** Wrong network: $ROUTERIP router MAC is not $ROUTERMAC" | tee -a $log
+                echo "$DATE 51 $backupset # disallowed network. network: $ROUTERIP router MAC is not $ROUTERMAC" >> $STATUSLOG
+                return 51
+            fi
         fi
         # parse the server name out of the connection string
         SERVER=$(sed -r "s|.*//(.*@)?||;s|/.*||"  <<< "$destURL")
@@ -63,6 +66,19 @@ initBackup() {
             echo "*** Backup server not reachable." | tee -a $log
             echo "$DATE 52 $backupset # can not reach $SERVER" >> $STATUSLOG
             return 52
+        fi
+        # security validation - grab the server key and make sure it matches our records
+        match=false
+        for i in ${!KEYS_OF_SERVERS[@]}; do
+            if ssh-keyscan $SERVER_REAL 2>/dev/null | grep -q "${KEYS_OF_SERVERS[$i]}"; then
+                match=true
+                break
+            fi
+        done
+        if [[ $match == false ]]; then
+            echo "*** Backup server signature does not match any provided in the list." | tee -a $log
+            echo "$DATE 53 $backupset # bad signature for $SERVER" >> $STATUSLOG
+            return 53
         fi
         if [[ $destURL == "rsync:"* ]]; then # check remote folder for rsync from the config
             REMOTEDEST=$(ssh -n $SERVER "sed -ne 's/^BACKUPDESTDIR=\([^ ]*\).*/\1/p' $(dirname $STATUSLOG)/backup.config")

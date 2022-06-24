@@ -17,11 +17,18 @@ FREQUENT_FILES_NUM=15			# how many frequently backed up files to report
 TOTAL_SIZE_FILES_NUM=15			# how many files using the most disk space across all backups to report
 
 # Remote backup configuration
-IF=eth0					# interface that is allowed to be used for backups
-ROUTERIP="192.168.1.1" 			# router ip to validate that we are on the right network
-ROUTERMAC="00:11:22:aa:bb:cc" 		# expected router MAC address
-NETMASK="192.168.1.0/24" 		# expected network
-WOL_MAC="00:11:22:aa:bb:cc"		# MAC address of the remote server, if you want to try to send wake on lan packets to it when it is down
+# if defined, check that there is an interface by the given name that's configured for the correct network. 
+#IF=eth0				# interface that is allowed to be used for backups
+#NETMASK="192.168.1.0/24" 		# expected network on $IF
+# If defined check the (router) IP and MAC before backing up to validate that we are on the right network  
+#ROUTERIP="192.168.1.1" 		# router ip to validate that we are on the right network
+ROUTERMAC="00:11:22:aa:bb:cc" 		# expected router MAC address for that $IP
+
+# an array of backup servers keys to validate against before connecting. Get one by running `ssh-keyscan <server>`. 
+# backup will proceed if the ssh-keyscan of the target server matches at least one of the signatures in the array below
+KEYS_OF_SERVERS=("server ssh-ed25519 <key>")	
+
+#WOL_MAC="00:11:22:aa:bb:cc"		# MAC address of the remote server, if you want to send wake on lan packets to it when it is not reachable
 SSH_CONTROL_SOCKET=$DIR/ssh_control_socket # file handle to control the SSH tunnel with
 KEY_FILES=/root/.keyfiles
 
