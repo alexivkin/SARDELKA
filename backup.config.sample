@@ -30,7 +30,7 @@ KEYS_OF_SERVERS=("server ssh-ed25519 <key>")
 
 #WOL_MAC="00:11:22:aa:bb:cc"		# MAC address of the remote server, if you want to send wake on lan packets to it when it is not reachable
 SSH_CONTROL_SOCKET=$DIR/ssh_control_socket # file handle to control the SSH tunnel with
-KEY_FILES=/root/.keyfiles
+KEY_FILES=/root/.keyfiles		# location of the LUKS keyfiles for End-to-End encryption
 
 # Backup monitor configuration
 ALERT_TOLERANCE_FACTOR=2 		# multiplication factor for the number of days that the backup has not completed successfuly before invoking the alert script

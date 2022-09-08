@@ -48,7 +48,7 @@ if [[ $unmount != "-u" ]]; then
     if [[ ! -e /dev/mapper/$E2EE_FILE ]]; then
         echo "*** Can't unencrypt and open $TEMP_MOUNT/$E2EE_FILE with $KEY_FILES/$E2EE_FILE"
         echo "Attempting to unmount $TEMP_MOUNT..."
-        sudo fusermount -u "$TEMP_MOUNT"
+        #sudo fusermount -u "$TEMP_MOUNT"
         exit 73
     fi
     echo "Mounting /dev/mapper/$E2EE_FILE device to a local filesystem at $BACKUPDESTDIR..."

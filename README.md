@@ -32,6 +32,7 @@ Types of the backup supported
 	* What backups have no new information? (all files in the backup are hardlinked somewhere else)
 	* What files take the most space in each backup? (what are the N biggest unique files in a backup)
 	* What files may not have important information? (what are the most frequently changed files across backups. If a file changes often and is backed up often, it may be less important to keep around all the versions of)
+    * As a feature the analyzer lookes across all backups, irrespective of the time they were taken, since it counts hardlinks. This means that files that were new to a give backup, but then showed up in later backups will NOT contribute to the uniquieness of that backup-set, unless/until you remove all other backups/hardlinks to these files.
 * **backup-cleaner** - Remove full synthetic backups intelligently
 	* Remove the partial and zero entropy backups
 	* Remove all folders older than the number of days indicated as the parameter,
@@ -46,15 +47,15 @@ Types of the backup supported
 
 The backup scripts treat end-to-end encrypted backup as local backups, except for the mounting and unmounting the file systems. You need to setup three things for the mounting:
 
-* an ssh user with the private/public key set up on the backup server
-* a (sparse) file on the backup server containing the encrypted filesystem
-* a local LUKs key to decrypt the remote file
+* an ssh user with the private/public key set up on the backup server, which will be used to mount the remote disk over sshfs
+* a (sparse) file on the backup server containing the encrypted filesystem, which will later be mounted with cryptsetup
+* a local LUKs key to decrypt the remote file containing the encrypted filesystem. This key never leaves the client ensuring e2e encryption
 
 #### Setting up the SSH
 
-1. Create the ssh key on the system you are backing up with something like `ssh-keygen -t ed25519 -f ~/.ssh/backupserver_backupuser`.
+1. Create the ssh user key on the system you are backing up with something like `ssh-keygen -t ed25519 -f ~/.ssh/backupserver_backupuser`.
 2. Create the user on the backup server with no password like this `sudo useradd -m -s /bin/bash backupuser`
-3. Create the proper folders, copy the public ssh key to `/.ssh/authorized_keys` and set proper access rights
+3. Create the required folders, copy the public ssh key to `/.ssh/authorized_keys` and set proper access rights
 ```
 sudo mkdir ~backupuser/.ssh
 sudo vi ~backupuser/.ssh/authorized_keys
@@ -68,7 +69,7 @@ Host e2eebackup
 	HostName backupserver
 	User backupuser
 	PubkeyAuthentication yes
-	IdentityFile ~/.ssh/octopi_backupionix_ed25519
+	IdentityFile ~/.ssh/backupserver_backupuser
 ```
 5. Login via `ssh e2eebackup` to ensure the server is known to the local ssh
 
@@ -77,26 +78,36 @@ Host e2eebackup
 To create the encrypted file do the following on the system you want to backup. Do not do it directly on the remote backup server, unless its you really trust it.
 
 1. Configure FUSE to allow root to operate on user mounts. This is needed because cryptsetup has to run as root to create /dev/mapper devices. To do this uncomment `user_allow_other` in `/etc/fuse.conf`
-2. Mount the remote server destination over SSHFS to the local server: `sshfs sshalias:/folder /tmp/plain`
+2. Mount the remote server destination over SSHFS to the local server: `sshfs -o allow_other e2eebackup:/media/disk/ /tmp/plain`
 3. Create a sparse file of the size you'd like it to grow to eventually `truncate -s 2T /tmp/plain/file.bak`. Set its ownership to the `backupuser:backupuser` and `chmod 600`
 4. Create an encryption key in the location specified by `KEY_FILES` in `backup.config` (defaults to `/root/.keyfiles`). The key file should be named exactly the same as the file you just created (e.g. "file.bak").
 ```
+sudo mkdir /root/.keyfiles/
 sudo dd if=/dev/urandom of=/root/.keyfiles/file.bak bs=4096 count=1
 sudo chmod 400 /root/.keyfiles/file.bak
 ```
-5. Format it for LUKS `sudo cryptsetup luksFormat /tmp/plain/file.bak...` setting up a recovery password and add your key `cryptsetup luksAddKey ~/tmp/plain/file.bak /root/.keyfiles/luks_remote_backups`, or just go all in with `cryptsetup luksFormat ~/tmp/plain/file.bak --key-file /root/.keyfiles/luks_remote_backups`
+5. Format it for LUKS `cryptsetup luksFormat /tmp/plain/file.bak` setting up a recovery password and add your key `cryptsetup luksAddKey /tmp/plain/file.bak /root/.keyfiles/file.bak`, or just go all in with `cryptsetup luksFormat ~/tmp/plain/file.bak --key-file /root/.keyfiles/luks_remote_backups`
 6. Mount and create the filesystem inside it:
 ```
-sudo cryptsetup luksOpen /mnt/backup-host/backup-file.luks --key-file /root/luks/backupstore.key backup-partition
+sudo cryptsetup luksOpen /tmp/plain/file.bak --key-file /root/.keyfiles/file.bak backup-partition
 sudo mkfs.ext4 -m0 -E lazy_itable_init=0,lazy_journal_init=0 /dev/mapper/backup-partition
-sudo mount /dev/mapper/backup-partition /tmp/remote-backup
+sudo mount /dev/mapper/backup-partition /media/backups
 ```
-7. Now close everything.
-
-Edit `backup.schedule` and specify which server to use and what file to mount like this: `e2ee://[sshalias]/[folder/file]`
+7. Edit `backup.schedule` and specify which server to use and what file to mount like this: `e2ee://[sshalias]/[folder/file]`
 
 * `sshalias` is the host alias in the `~/.ssh/config` file that specifies which user and key to use to connect to which server for the backup
 * folder/file is the location of the encrypted file on the backup server
+
+8. Prepare the folders. Pre-create folders for all backup sets.
+
+```
+sudo chown o+rw /tmp/plain/status
+sudo chown user:user /media/backups
+mkdir /media/backups/backupset && chmod 700 /media/backups/backupset
+mkdir /media/backups/backupset2 && chmod 700 /media/backups/backupset2
+```
+
+9. Unmount everything with `backup-mounter <backupset> -u` so it does not block the actual backups.
 
 ## Running
 
@@ -104,7 +115,7 @@ Edit `backup.schedule` and specify which server to use and what file to mount li
 
 Create the backup.schedule that can can contain only one line: `docker syntheticFullBackup 1 /source,/backups`. This names backups "docker" and sets a one per day frequency.
 
-Create the backup.config file that needs to have, at the very least:
+Create the backup.config file with, at the very least, these settings:
 ```
 DIR=/sardelka				# dir where all the scripts and configs are
 BACKUPDESTDIR=/backups 			# backup destination
@@ -127,26 +138,33 @@ Optionally you can expose the logs as `-v /log/folder:/sardelka/logs`
 ### Running natively
 
 * Clone the repo
+* Allow non-password sudo for required commands. `sudo visudo` and add `<userhere> ALL = (root) NOPASSWD:  /usr/sbin/cryptsetup,/usr/bin/umount,/usr/bin/rsync,/usr/sbin/ufw,/usr/bin/mount`
+* Allow non-root sshfs users to mount as root. `sudo vi /etc/fuse.conf` and uncomment `user_allow_other`
 * Rename backup.config.sample and backup.schedule.sample to backup.config and backup.schedule respectively
 * Edit both files to configure your backups
 * Create .exclude file for each backup, even if it's empty. You can use the included samples for reference
 
 ## Scheduling periodic backups
 
-To schedule `backup` to run every day either plop a symlink into /etc/cron.daily/ or add it to your crontab with crontab -e. If scheduling as root to backup a user folder, you might need to re-launch backup as a user, e.g.
+The `backup` script checks the schedule and the backup server availability before it runs backups. You can use anacron or cron to run it as often as you want, or you can run it whenever your devices connects to a network.
 
-Note that even though cron or anacron will start your script every day, it will not guarantee daily backups for laptops that you carry with you. Instead you might want to trigger backups when connected to the right network.
-To do that create a script to launch `backup` as yourself by NetworkManager, e.g. `/etc/NetworkManager/dispatcher.d/55BackupLauncher.sh`
+* For scheduled runs create a symlink into /etc/cron.daily/ or add it to your crontab with crontab -e. If scheduling as root to backup a user folder, you might need to create a script to re-launch backup as a user, e.g.
 
-`sudo -u user -H /home/user/sardelka/backup`
+```
+echo "sudo -u user -H /home/user/bin/backupTools/backup" > /home/alex/bin/backupTools/backup-launcher-as-user
+sudo ln -s /home/alex/bin/backupTools/backup-launcher-as-user /etc/cron.daily
+```
 
-Then
+* To trigger backups when connected to the right network create a script to launch `backup` as yourself by NetworkManager, e.g. `/etc/NetworkManager/dispatcher.d/55BackupLauncher.sh`
 
-`chmod 755 /etc/NetworkManager/dispatcher.d/55BackupLauncher.sh`
 
-Verify that the proper network is specified in `backup.config` IF, ROUTERIP and ROUTERMAC variables and restart the network manager
+```
+echo "sudo -u user -H /home/user/bin/backupTools/backup" | sudo tee /etc/NetworkManager/dispatcher.d/55BackupLauncher.sh
+chmod 755 /etc/NetworkManager/dispatcher.d/55BackupLauncher.sh
+sudo service network-manager restart
+```
 
-`sudo service network-manager restart`
+Verify that the proper network is specified in `backup.config`  or IF, ROUTERIP and ROUTERMAC variables and restart the network manager
 
 ## Monitoring and maintaining backups
 
@@ -165,7 +183,7 @@ It's recommended to run `backup-analyzer` periodically as well, so you do not ha
 
 * Why Bash?
 
-Because KISS and less dependencies. Also because it grew up from a 5 line bash script kicking off rsync
+Because less dependencies. Also because it grew up from a 5 line bash script kicking off rsync.
 
 * Windows?
 

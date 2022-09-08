@@ -2,7 +2,7 @@
 echo --------------------------------------------------- >> ~/bin/restore.log
 date >> ~/bin/restore.log
 # home dir restore dry run, remove -n to do actual run
-rsync -nvarz --stats --log-file ~/bin/restore.log /media/Backups/system/home/user/ /home/user/
+rsync -nvarz --stats --log-file ~/bin/restore.log /media/backups/system/home/user/ /home/user/
 
 # to restore from a remote system use something like this
 # this will keep files that were updated on the destination

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Backup routines
-# 2020 (c) Alex Ivkin
+# 2022 (c) Alex Ivkin
 #
 # TODO:
 #    Remove hardcoded sudo's from some functions (e.g. analyze)
@@ -243,6 +243,7 @@ syntheticFullBackup() {
                 echo "Link to the previous backup is broken: $linkdest -> $LASTBACKUPFULLNAME" | tee -a $log
                 echo "If you wish to continue re-link it to the latest correct backup or remove the broken link to start a complete full backup" | tee -a $log
                 echo "$DATE 69 $backupset # error setting up a remote backup to $SERVER due to a bad symlink to the previous backup" >> $STATUSLOG
+                teardownBackup
                 return
             fi
             opts+=(--link-dest=../$(basename $LASTBACKUPFULLNAME))  # for remote systems it needs to be relative, not absolute, due to the URL addressing scheme
@@ -262,6 +263,7 @@ syntheticFullBackup() {
                 echo "Link to the previous backup is broken: $linkdest -> $LASTBACKUPFULLNAME" | tee -a $log
                 echo "If you wish to continue re-link it to the latest correct backup or remove the broken link to start a complete full backup" | tee -a $log
                 echo "$DATE 88 $backupset # error setting up a backup due to a bad symlink to the previous backup" >> $STATUSLOG
+                teardownBackup
                 return
             fi
         fi
@@ -688,13 +690,16 @@ analyzeBackup() {
         #for file in $(sudo find $i -type f -printf "%s-%n\n"); do # this loop is possible because there are no spaces in the printf. However It's slower than the forked while below
         # the loop below takes most time, so it should be as tight as possible
         while IFS= read -d '' -r file; do # IFS= removes default line splits on \t, space and \n, allowing them in file names
-            IFS=$'\b' read -d '' -r name size ncount inode <<<"$file"
-            ((totalsize+=size))
+            IFS=$'\b\n' read -d '' -r name size ncount ftype<<<"$file" # \n to trim the endline off the last variable value
             ((totalcount++))
+            if [[ $ftype != "f" ]]; then # non-standard files are only used for total count
+                continue
+            fi
             if [[ -z $ncount ]]; then # error checking
-                echo "Error # $file=$name-$size-$ncount"
+                echo "Error $file -> $name $size $ncount $ftype"
                 exit
             fi
+            ((totalsize+=size))
             if [[ $ncount -eq 1 ]]; then
                 ((uniquesize+=size))
                 ((uniquecount++))
@@ -703,7 +708,8 @@ analyzeBackup() {
                 backuphash["$shortname"]=$size # double quote here and a single quote in the (( )) below is important. Bash is screwy like that
                 ((filespace['$shortname']+=size)) # total space used by the file
             fi
-        done < <(sudo find $i -type f -printf "%p\b%s\b%n\b%i\0")   # file name, size in bytes, number of hardlinks and inode. can not use %f instead of %p because we need the folder name. Using \b (backspace) as a separator. Although it COULD appear in a name it is very unlikely. / and \0 are the only disallowed character in ext4 file name. / is in paths though
+        done < <(sudo find $i \( ! -type d \)  -printf "%p\b%s\b%n\b%y\0") # collect file name, size in bytes, number of hardlinks and filetype. Can not use %f instead of %p because we need the folder name. To get file's inode use %i
+        # Using \b (backspace) as a separator. Although it COULD appear in a name it is very unlikely. / and \0 are the only disallowed character in ext4 file name. / is in paths though
         #echo ${#filehash[@]}
         if [[ $totalcount -eq 0 || $totalsize -eq 0 ]]; then
             echo "Empty backup (no files of any kind)"
@@ -711,10 +717,10 @@ analyzeBackup() {
             #printf "%-65s ,  0%% total content, no files\n" $i >> $BACKUP_RATINGS
             continue
         fi
-        ((totalspace+=uniquesize)) # keep track of the total space used by all unique files in all backups
         # add symlinks and other files into the total count (sans directories). These produce correct count of files that can be used to see the progress of the rmWithProgress
-        symlinkcount=$(sudo find $i \( ! -type d \) -printf '.' | wc -c)  # prinft and wc -c is faster than wc -l
-        ((totalcount+=symlinkcount))
+        #symlinkcount=$(sudo find $i \( ! -type d \) -printf '.' | wc -c)  # prinft and wc -c is faster than wc -l
+        #((totalcount+=symlinkcount))
+        ((totalspace+=uniquesize)) # keep track of the total space used by all unique files in all backups
         echo -n "reviewing ..." # ${#filehash[@]}..."
         # reduce the "uniquiness" factor if the file is marked as unique, but it has already appeared as unique in backups before this one.
         # I.e. it's a file that changes often and is backed up often, therefore less important to keep around

@@ -29,11 +29,16 @@ while read -r -a b; do
         timecheck=$(checkBackupTime ${b[0]} ${b[2]} "${parms[@]}") # check if it's the time for it to run, params define if we need to check logs on a remote systems
         if [[ -n $timecheck ]]; then
            if [[ ${parms[0]} != "remote" ]]; then
+                # check if this backup is already running right now
+                if pgrep -f "rsync.*${b[0]}.*${params[0]}" 1>/dev/null; then
+                    echo "${b[1]} ${b[0]} ${parms[0]} is already in progress, skipping."
+                    continue
+                fi
                 echo "Launching ${b[1]} ${b[0]} ${parms[@]} ..."
                 if [[ $GUI_PROMPT ]]; then
                     notify-gui "Launching ${b[1]} ${b[0]} ..."
                 fi
-                ${b[1]} ${b[0]} "${parms[@]}"   # launch the backup command. Meed to use this syntax so the array expands correctly into individual parameters
+                ${b[1]} ${b[0]} "${parms[@]}"   # launch the backup command. Using this syntax so the array expands correctly into individual parameters
                 # after everything is done, check that it was done properly
                 validate=$(checkBackupTime ${b[0]} ${b[2]} "${parms[@]}") # check again to record any errors
                 if [[ $GUI_PROMPT ]]; then
