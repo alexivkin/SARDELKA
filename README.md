@@ -53,6 +53,7 @@ The backup scripts treat end-to-end encrypted backup as local backups, except fo
 
 #### Setting up the SSH
 
+1. Give your local user an ability to run LUKS and mount commands without requiring password. Running `sudo visudo` and add `<user here> ALL = (root) NOPASSWD:  /usr/sbin/cryptsetup,/usr/bin/umount,/usr/bin/rsync,/usr/sbin/ufw,/usr/bin/mount`
 1. Create the ssh user key on the system you are backing up with something like `ssh-keygen -t ed25519 -f ~/.ssh/backupserver_backupuser`.
 2. Create the user on the backup server with no password like this `sudo useradd -m -s /bin/bash backupuser`
 3. Create the required folders, copy the public ssh key to `/.ssh/authorized_keys` and set proper access rights

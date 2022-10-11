@@ -89,7 +89,7 @@ initBackup() {
             # now do the free space check - first get the backup directory name, then check for space
             ssh -n $SERVER "grep -qs '$REMOTEDEST' /proc/mounts"
             if [[ $? -eq 1 ]]; then
-                echo "*** Backup disk $REMOTEDEST is not mounted. Exiting." | tee -a $log
+                echo "*** Remote backup disk $REMOTEDEST is not mounted on $SERVER. Exiting." | tee -a $log
                 echo "$DATE 99 $backupset # backup disk $REMOTEDEST is not mounted on $SERVER." >> $STATUSLOG
                 return 99
             fi
@@ -121,7 +121,7 @@ initBackup() {
                 echo "$DATE 71 $backupset # sshfs is already mounted to $TEMP_MOUNT" >> $STATUSLOG
                 return 71
             fi
-            # sanity checks for the remote FS
+            # sanity checks for the remote FS (Actually this is already checked above, keeping it here for consistency)
             ssh -n $SERVER "grep -qs '$E2EE_FOLDER' /proc/mounts"
             if [[ $? -eq 1 ]]; then
                 echo "*** Remote backup disk $E2EE_FOLDER is not mounted on $SERVER. Exiting." | tee -a $log
