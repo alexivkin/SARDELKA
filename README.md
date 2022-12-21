@@ -79,7 +79,7 @@ Host e2eebackup
 To create the encrypted file do the following on the system you want to backup. Do not do it directly on the remote backup server, unless its you really trust it.
 
 1. Configure FUSE to allow root to operate on user mounts. This is needed because cryptsetup has to run as root to create /dev/mapper devices. To do this uncomment `user_allow_other` in `/etc/fuse.conf`
-2. Mount the remote server destination over SSHFS to the local server: `sshfs -o allow_other e2eebackup:/media/disk/ /tmp/plain`
+2. Mount the remote server destination over SSHFS to the local server: `sshfs -o reconnect,ConnectTimeout=10,ServerAliveInterval=10,allow_root e2eebackup:/media/disk/ /tmp/plain`
 3. Create a sparse file of the size you'd like it to grow to eventually `truncate -s 2T /tmp/plain/file.bak`. Set its ownership to the `backupuser:backupuser` and `chmod 600`
 4. Create an encryption key in the location specified by `KEY_FILES` in `backup.config` (defaults to `/root/.keyfiles`). The key file should be named exactly the same as the file you just created (e.g. "file.bak").
 ```
@@ -139,7 +139,7 @@ Optionally you can expose the logs as `-v /log/folder:/sardelka/logs`
 ### Running natively
 
 * Clone the repo
-* Allow non-password sudo for required commands. `sudo visudo` and add `<userhere> ALL = (root) NOPASSWD:  /usr/sbin/cryptsetup,/usr/bin/umount,/usr/bin/rsync,/usr/sbin/ufw,/usr/bin/mount`
+* Allow non-password sudo for required commands. `sudo visudo` or edit the /etc/sudoers file and add `<userhere> ALL = (root) NOPASSWD:  /usr/sbin/cryptsetup,/usr/bin/umount,/usr/bin/rsync,/usr/sbin/ufw,/usr/bin/mount`. Make sure it comes after all other staatement that may apply to your user, as the last statement takes precidence for sudo.
 * Allow non-root sshfs users to mount as root. `sudo vi /etc/fuse.conf` and uncomment `user_allow_other`
 * Rename backup.config.sample and backup.schedule.sample to backup.config and backup.schedule respectively
 * Edit both files to configure your backups

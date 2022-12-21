@@ -38,7 +38,7 @@ if [[ $unmount != "-u" ]]; then
     fi
     mkdir -p $TEMP_MOUNT
     echo "Mounting $SERVER:$E2EE_FOLDER/ via SSHFS to $TEMP_MOUNT..."
-    sshfs -o allow_root $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT # need allow_root here because cryptsetup has to run as root to create /dev/mapper devices
+    sshfs -o reconnect,ConnectTimeout=10,ServerAliveInterval=10,allow_root $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT # need allow_root here because cryptsetup has to run as root to create /dev/mapper devices
     if [[ ! -f $TEMP_MOUNT/$E2EE_FILE ]]; then
         echo "*** $TEMP_MOUNT/$E2EE_FILE file is not found"
         exit 72
@@ -68,5 +68,5 @@ else
     fi
     sleep 1
     echo "Unmounting $SERVER:$E2EE_FOLDER/ from $TEMP_MOUNT"
-    sudo fusermount -u $TEMP_MOUNT
+    fusermount -u $TEMP_MOUNT
 fi
