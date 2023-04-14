@@ -9,14 +9,20 @@ source "${realme%/*}/backup-functions" # load common functions from the same fol
 BACKUP_LIST=$(sed "s/#.*//" $DIR/backup.schedule | tr '\r' ' ' | grep "e2ee:" | cut -f 1 | tr '\r' ' ')
 
 if [[ $# -eq 0 ]]; then
-    echo -e "Provide a name of the backup and -u if you want to unmount it. The name must be one of:\n$BACKUP_LIST"
+    echo "Provide a name of the backup as a plan name from the list below or in a form e2ee://{server}/{diskfile}"
+    echo "       -u if you want to unmount it."
+    echo -e "The name must be one of:\n$BACKUP_LIST"
     exit 1
 fi
 
 backup_name=$1
 unmount=${2:-}
 
-destURL=$(sed -nr "s/^${backup_name}\s.*(e2ee:[^ ,]*)/\1/p" $DIR/backup.schedule | head -1 | tr -d '\r' )
+if [[ ${backup_name} =~ e2ee://.* ]]; then
+    destURL=${backup_name}
+else
+    destURL=$(sed -nr "s/^${backup_name}\s.*(e2ee:[^ ,]*)/\1/p" $DIR/backup.schedule | head -1 | tr -d '\r' )
+fi
 if [[ -z $destURL ]]; then
     echo -e "It must match one of:\n$BACKUP_LIST"
     exit 1
