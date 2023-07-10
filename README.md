@@ -50,6 +50,8 @@ Types of the backup supported
 The backup scripts treat end-to-end encrypted backup as local backups, except for the mounting and unmounting the file systems.
 There are two ways to do this - with or without transport level encryption. The first one uses SSH, the second one uses NFS. The first one is slower and prone to hangups, the second one should only be used on semi-trusted networks, as metadata about the connection is not encrypted.
 
+    NOTE: it is possible to encrypt NFS metadata traffic with `stunnel` but it's not currently implemented
+
 You need to setup three things for the mounting:
 
 * A way to connect - an ssh user with the private/public key set up on the backup server, which will be used to mount the remote disk over sshfs OR an NFS export share.
@@ -71,15 +73,32 @@ sudo chmod 600 ~backupuser/.ssh/authorized_keys
 ```
 4. Create an entry on the system you are backing up in the `~/.ssh/config` like the following
 ```
-Host e2eebackup
-	HostName backupserver
+Host backupserver
 	User backupuser
 	PubkeyAuthentication yes
 	IdentityFile ~/.ssh/backupserver_backupuser
 ```
 5. Login via `ssh e2eebackup` to ensure the server is known to the local ssh
 
-### Setting up the backup storage
+#### Setting up NFS
+
+Make sure you have the NFS client on the client: `sudo apt install nfs-common`
+
+On the server
+
+	sudo apt-get install nfs-kernel-server
+	sudo systemctl start nfs-kernel-server.service
+	sudo ufw allow from <client subnet> to any port nfs
+
+vi /etc/export
+
+	/media/disk <client subnet>(rw, async, no_subtree_check)
+
+apply the config:
+
+	sudo exportfs -a
+
+### Setting up the encrypted storage
 
 To create the encrypted file do the following on the system you want to backup. Do not do it directly on the remote backup server, unless its you really trust it.
 
@@ -148,6 +167,7 @@ Optionally you can expose the logs as `-v /log/folder:/sardelka/logs`
 * Allow non-root sshfs users to mount as root. `sudo vi /etc/fuse.conf` and uncomment `user_allow_other`
 * Rename backup.config.sample and backup.schedule.sample to backup.config and backup.schedule respectively
 * Edit both files to configure your backups
+* For GUI notifications install libnotify with `apt install libnotify-bin`
 * Create .exclude file for each backup, even if it's empty. You can use the included samples for reference
 
 ## Scheduling periodic backups

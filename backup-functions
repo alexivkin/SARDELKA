@@ -848,15 +848,14 @@ rmWithProgress(){
     # remove a backup folder for a synthetic full backup displaying progress
     # the total number of files/folders to delete is estimated from the previously recorded data by backup-analyzer. If missing the files are counted by 'find'
     if [[ -d "$1" ]]; then
-        #exclusivity=$(grep $1 $BACKUP_RATINGS | awk '{print $4}')
         dir=${1%/} # remove trailing slash
         # try to find an entry in backup-analyzer-usage.list - use as the target for PV
-        #filecount=$(sed -nr "s|.*\/(.*) \(.*$dir|\1|p" $BACKUP_USAGE | tr -d ' ,')
         # using | sign in sed to avoid issues with / in the full path names affecting the regexp patter. `tr` removes the thousands delimiter comma and padding
-        exclusivity=$(sed -nr "s|.*\(\s*(.*)%\)\t$dir|\1|p" $BACKUP_USAGE)
-        filecount=$(sed -nr "s|[^\t]*\t[^/]*/([^(]*).*\t$dir|\1|p" $BACKUP_USAGE | tr -d ' ,')
-        filespace=$(sed -nr "s|([^/]*).*$dir|\1|p" $BACKUP_USAGE | tr -d ' ,')
-        # echo sed -nr "s/.*\/(.*) \(.*$dir/\1/p" ~/bin/backup-analyzer-usage.list $filecount
+        if [[ -f $BACKUP_USAGE ]]; then
+            exclusivity=$(sed -nr "s|.*\(\s*(.*)%\)\t$dir|\1|p" $BACKUP_USAGE)
+            filecount=$(sed -nr "s|[^\t]*\t[^/]*/([^(]*).*\t$dir|\1|p" $BACKUP_USAGE | tr -d ' ,')
+            filespace=$(sed -nr "s|([^/]*).*$dir|\1|p" $BACKUP_USAGE | tr -d ' ,')
+        fi
         if [[ -z $filecount ]]; then
             filecount=$(find $1 \( ! -type d \) -printf '.'|pv --name "Listing $1 files" |wc -c) # count files and symlinks to match the backup-analyzer-usage stats. printf is used because it's faster than writing lines
             #echo "Processing $1 ($filecount files)." #| tee -a $log
