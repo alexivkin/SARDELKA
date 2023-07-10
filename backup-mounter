@@ -6,10 +6,10 @@
 realme=$(realpath $0) # dereference if called via a symlink
 source "${realme%/*}/backup-functions" # load common functions from the same folder as this file
 
-BACKUP_LIST=$(sed "s/#.*//" $DIR/backup.schedule | tr '\r' ' ' | grep "e2ee:" | cut -f 1 | tr '\r' ' ')
+BACKUP_LIST=$(sed "s/#.*//" $DIR/backup.schedule | tr '\r' ' ' | grep -E "e2...?:" | cut -f 1 | tr '\r' ' ')
 
 if [[ $# -eq 0 ]]; then
-    echo "Provide a name of the backup as a plan name from the list below or in a form e2ee://{server}/{diskfile}"
+    echo "Provide a name of the backup as a plan name from the list below or in a form e2ee://{server}/{diskfile} or e2nfs://{server}/{diskfile}"
     echo "       -u if you want to unmount it."
     echo -e "The name must be one of:\n$BACKUP_LIST"
     exit 1
@@ -18,11 +18,13 @@ fi
 backup_name=$1
 unmount=${2:-}
 
-if [[ ${backup_name} =~ e2ee://.* ]]; then
+if [[ ${backup_name} =~ ^e2...?://.* ]]; then
     destURL=${backup_name}
 else
-    destURL=$(sed -nr "s/^${backup_name}\s.*(e2ee:[^ ,]*)/\1/p" $DIR/backup.schedule | head -1 | tr -d '\r' )
+    # map short name into the full name
+    destURL=$(sed -nr "s/^${backup_name}\s.*(e2...?:[^ ,]*)/\1/p" $DIR/backup.schedule | head -1 | tr -d '\r' )
 fi
+
 if [[ -z $destURL ]]; then
     echo -e "It must match one of:\n$BACKUP_LIST"
     exit 1
@@ -33,7 +35,7 @@ E2EE_FOLDER=$(sed -r "s|.*//$SERVER/(.*)/.*|/\1|" <<< "$destURL")
 E2EE_FILE=$(sed -r "s|.*/||" <<< "$destURL")
 TEMP_MOUNT=/tmp/$SERVER
 
-if [[ $unmount != "-u" ]]; then
+if [[ "$unmount" != "-u" ]]; then
     if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
         echo "*** $BACKUPDESTDIR is already mounted."
         exit 98
@@ -43,8 +45,14 @@ if [[ $unmount != "-u" ]]; then
         exit 71
     fi
     mkdir -p $TEMP_MOUNT
-    echo "Mounting $SERVER:$E2EE_FOLDER/ via SSHFS to $TEMP_MOUNT..."
-    sshfs -o reconnect,ConnectTimeout=10,ServerAliveInterval=10,allow_root $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT # need allow_root here because cryptsetup has to run as root to create /dev/mapper devices
+
+    if [[ ${backup_name} =~ e2ee://.* ]]; then
+        echo "Mounting $SERVER:$E2EE_FOLDER/ via SSHFS to $TEMP_MOUNT..."
+        sshfs -o reconnect,ConnectTimeout=10,ServerAliveInterval=10,allow_root $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT # need allow_root here because cryptsetup has to run as root to create /dev/mapper devices
+    else
+        echo "Mounting $SERVER:$E2EE_FOLDER/ via NFS to $TEMP_MOUNT..."
+        sudo mount $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT
+    fi
     if [[ ! -f $TEMP_MOUNT/$E2EE_FILE ]]; then
         echo "*** $TEMP_MOUNT/$E2EE_FILE file is not found"
         exit 72
@@ -74,5 +82,9 @@ else
     fi
     sleep 1
     echo "Unmounting $SERVER:$E2EE_FOLDER/ from $TEMP_MOUNT"
-    fusermount -u $TEMP_MOUNT
+    if [[ ${backup_name} =~ e2ee://.* ]]; then
+        fusermount -u $TEMP_MOUNT
+    else
+        sudo umount $TEMP_MOUNT
+    fi
 fi

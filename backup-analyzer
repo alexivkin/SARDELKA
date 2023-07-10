@@ -41,14 +41,14 @@ while read -r -a b; do
     fi
     if [[ -n ${b[0]} ]]; then   # if not blank
         if [[ ${b[1]} == "syntheticFullBackup" ]]; then
-            if [[ ${b[3]} =~ .*e2ee.* ]]; then # mount e2e backups
-                   ${realme%/*}/backup-mounter ${b[0]}
+            if [[ ${b[3]} =~ .*e2...?:.* ]]; then # mount e2e backups
+                  ${realme%/*}/backup-mounter ${b[0]}
             fi
             analyzeBackup $BACKUPDESTDIR/${b[0]}/
             if [[ -d $BACKUPARCHIVE/${b[0]}/ ]]; then
                 analyzeBackup $BACKUPARCHIVE/${b[0]}/
             fi
-            if [[ ${b[3]} =~ .*e2ee.* ]]; then # unmount e2e backups
+            if [[ ${b[3]} =~ .*e2...?:.* ]]; then # unmount e2e backups
                 ${realme%/*}/backup-mounter ${b[0]} -u
             fi
         fi

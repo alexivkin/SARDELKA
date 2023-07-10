@@ -7,7 +7,7 @@ source "${0%/*}/backup-functions" # load common functions from the same folder a
 # stop scipt on a simple command error and on error from rm
 #set -e
 set -o pipefail
-shopt -s nullglob # avoid matching *.* when there is no backups found, for example when the e2ee folder is not mounted
+shopt -s nullglob # avoid matching *.* when there is no backups found, for example when the e2e folder is not mounted
 
 if [[ $# -eq 0 ]]; then
     echo "Four ways to run"

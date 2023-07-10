@@ -47,9 +47,12 @@ Types of the backup supported
 
 ### How to set up End-to-End encryption
 
-The backup scripts treat end-to-end encrypted backup as local backups, except for the mounting and unmounting the file systems. You need to setup three things for the mounting:
+The backup scripts treat end-to-end encrypted backup as local backups, except for the mounting and unmounting the file systems.
+There are two ways to do this - with or without transport level encryption. The first one uses SSH, the second one uses NFS. The first one is slower and prone to hangups, the second one should only be used on semi-trusted networks, as metadata about the connection is not encrypted.
 
-* an ssh user with the private/public key set up on the backup server, which will be used to mount the remote disk over sshfs
+You need to setup three things for the mounting:
+
+* A way to connect - an ssh user with the private/public key set up on the backup server, which will be used to mount the remote disk over sshfs OR an NFS export share.
 * a (sparse) file on the backup server containing the encrypted filesystem, which will later be mounted with cryptsetup
 * a local LUKs key to decrypt the remote file containing the encrypted filesystem. This key never leaves the client ensuring e2e encryption
 
