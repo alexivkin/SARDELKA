@@ -93,12 +93,14 @@ initBackup() {
                 echo "$DATE 99 $backupset # backup disk $REMOTEDEST is not mounted on $SERVER." >> $STATUSLOG
                 return 99
             fi
-            # backupdestdir would not be defined when using rsync URL
-            freespace=$(ssh -n $SERVER "df -m \"$REMOTEDEST\"" | awk "NR==2{print \$4}")
-            if [[ $freespace -le $MINSPACE ]]; then
-                echo "*** Backup space is running short. Only $freespace MB left on $REMOTEDEST!. Exiting." | tee -a $log
-                echo "$DATE 95 $backupset # backup free space on $SERVER is under the allowed limit of $freespace MB" >> $STATUSLOG
-                return 95
+            if [[ ! ($destURL == "e2ee:"* || $destURL == "e2nfs:"*) ]]; then # only check space on the remote drive for non-e2ee locations, since there may be free space inside the e2ee file/fs
+                # backupdestdir would not be defined when using rsync URL
+                freespace=$(ssh -n $SERVER "df -m \"$REMOTEDEST\"" | awk "NR==2{print \$4}")
+                if [[ $freespace -le $MINSPACE ]]; then
+                    echo "*** Backup space is running short. Only $freespace MB left on $REMOTEDEST!. Aborting." | tee -a $log
+                    echo "$DATE 95 $backupset # backup free space on $SERVER is under the allowed limit of $freespace MB" >> $STATUSLOG
+                    return 95
+                fi
             fi
         else
             echo "*** Can not query remote disk $REMOTEDEST for free space. Exiting." | tee -a $log
@@ -122,19 +124,12 @@ initBackup() {
                 return 71
             fi
             # sanity checks for the remote FS (Actually this is already checked above, keeping it here for consistency)
-            ssh -n $SERVER "grep -qs '$E2EE_FOLDER' /proc/mounts"
-            if [[ $? -eq 1 ]]; then
-                echo "*** Remote backup disk $E2EE_FOLDER is not mounted on $SERVER. Exiting." | tee -a $log
-                echo "$DATE 99 $backupset # remote backup disk $E2EE_FOLDER is not mounted on $SERVER." >> $STATUSLOG
-                return 99
-            fi
-            # check the free space
-            freespace=$(ssh -n $SERVER "df -m \"$E2EE_FOLDER\"" | awk "NR==2{print \$4}")
-            if [[ $freespace -le $MINSPACE ]]; then
-                echo "*** Remote backup space is running short. Only $freespace MB left on $E2EE_FOLDER!. Exiting." | tee -a $log
-                echo "$DATE 95 $backupset # remoe backup free space on $SERVER is under the allowed limit of $freespace MB" >> $STATUSLOG
-                return 95
-            fi
+            #ssh -n $SERVER "grep -qs '$E2EE_FOLDER' /proc/mounts"
+            #if [[ $? -eq 1 ]]; then
+            #    echo "*** Remote backup disk $E2EE_FOLDER is not mounted on $SERVER. Exiting." | tee -a $log
+            #    echo "$DATE 99 $backupset # remote backup disk $E2EE_FOLDER is not mounted on $SERVER." >> $STATUSLOG
+            #    return 99
+            #fi
             # now onto the mounting
             mkdir -p $TEMP_MOUNT
             if [[ $destURL == "e2ee:"* ]]; then
@@ -718,6 +713,7 @@ analyzeBackup() {
                 ((uniquesize+=size))
                 ((uniquecount++))
                 shortname=${name:ilen} # trim the backup name from the file name, faster alternative to shortname=${name#$i/} # remove the backup name
+                shortname=${shortname//\'/} # remove single quotes so the lines below work correctly
                 ((filehash['$shortname']++)) # count the number of times the file shows up with one hardlink, i.e. how often file occurs in backups as unique
                 backuphash["$shortname"]=$size # double quote here and a single quote in the (( )) below is important. Bash is screwy like that
                 ((filespace['$shortname']+=size)) # total space used by the file

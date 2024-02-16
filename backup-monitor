@@ -23,9 +23,9 @@ while read -r -a b; do
 		if [[ -n $validate ]]; then
 			if [[ -n $errortext ]]; then
 				errortext="$errortext\n$validate"
-		        else
+	        else
 				errortext=$validate
-		        fi
+	        fi
 		fi
 	fi
 done < <(sed "s/#.*//" $DIR/backup.schedule | tr '\r' ' ') # trim everything after a hash (i.e comments). trim \r from the end of the line. you could trim it from the array variable too ${b[0]//[$'\r\n']}

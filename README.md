@@ -134,6 +134,8 @@ mkdir /media/backups/backupset2 && chmod 700 /media/backups/backupset2
 
 9. Unmount everything with `backup-mounter <backupset> -u` so it does not block the actual backups.
 
+Do not forget to backup your keyfile somewhere separately, otherwise the backups will be useless if they are stored a filesystem you are backing up and that filesystem is corrupted.
+
 ## Running
 
 ### As a docker container
@@ -191,6 +193,16 @@ sudo service network-manager restart
 ```
 
 Verify that the proper network is specified in `backup.config`  or IF, ROUTERIP and ROUTERMAC variables and restart the network manager
+
+
+## Restoring
+
+1. Clone this repo
+1. Restore the e2ee keys, configure the ssh keys
+1. if using nfs, install the nfs client, e.g `apt install nfs-common`
+1. `mkdir /media/backups`
+1. If you are using e2ee, run `backup-mounter <system-name>`
+1. Edit `./restore` and run it
 
 ## Monitoring and maintaining backups
 
