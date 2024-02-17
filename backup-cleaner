@@ -40,6 +40,9 @@ if [[ $1 == safe ]]; then # remove emplty, partial and in-flight backups
 
     while read -r -a b; do
         #echo -e "Checking $BACKUPDESTDIR/$b..."
+        if [[ ! -d "$BACKUPDESTDIR/$b" || -z "$(ls -A $BACKUPDESTDIR/$b/)" ]]; then
+            echo "$BACKUPDESTDIR/$b is not mounted"
+        fi
         for f in $BACKUPDESTDIR/$b/*.* ; do # dot in the glob is to avoid matching bare 'home' syslinks
             if [[ "$f" == *.partial || "$f" == *.inflight ]]; then
                 rmWithProgress $f $dryrun
@@ -79,6 +82,9 @@ elif [[ $1 =~ $num_re ]]; then # remove backups older than N days
     # for f in $(sed 's/\*\*\* \([^ ]*\).*/\1/' $BACKUP_RATINGS); do
     while read -r -a b; do
         #echo -e "Checking $BACKUPDESTDIR/$b..."
+        if [[ ! -d "$BACKUPDESTDIR/$b" || -z "$(ls -A $BACKUPDESTDIR/$b/)" ]]; then
+            echo "$BACKUPDESTDIR/$b is not mounted"
+        fi
         for f in $BACKUPDESTDIR/$b/*.* ; do
             #echo -ne "Checking $f...\r"
             backupdate=$(echo ${f%%.partial} | tr . ' ' | awk '{gsub("-",":",$NF); print $(NF-1),$NF}')     # makes the date from the folder name readable by the 'date' command - removing the .partial prefix if present, and parsing the fields properly, in case there is a dot in the name of the backup
@@ -121,6 +127,9 @@ elif [[ $1 =~ $percent_re ]]; then # remove with exclusivity less than or equal 
     # go over all known backups and lookup exclusivity in the analysis file
     while read -r -a b; do
         #echo -e "Checking $BACKUPDESTDIR/$b..."
+        if [[ ! -d "$BACKUPDESTDIR/$b" || -z "$(ls -A $BACKUPDESTDIR/$b/)" ]]; then
+            echo "$BACKUPDESTDIR/$b is not mounted"
+        fi
         for f in $BACKUPDESTDIR/$b/*.* ; do
             #echo -ne "Checking $f...\r"
             exclusivity=$(sed -nr "s|.*\(\s*(.*)%\)\t$f|\1|p" $BACKUP_USAGE)
