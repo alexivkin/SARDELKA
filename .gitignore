@@ -10,3 +10,4 @@ logs/
 *-launcher-as-*
 *.secrets
 nohup.out
+tmp.*

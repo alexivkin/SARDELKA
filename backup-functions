@@ -159,6 +159,13 @@ initBackup() {
             fi
             echo "Mounting /dev/mapper/$E2EE_FILE device to a local filesystem at $BACKUPDESTDIR..." | tee -a $log
             sudo mount /dev/mapper/$E2EE_FILE $BACKUPDESTDIR
+            # check if it mounted correctly
+            grep -qs "$BACKUPDESTDIR" /proc/mounts
+            if [[ $? -eq 1 ]]; then
+                echo "*** Backup disk $BACKUPDESTDIR is not mounted. Exiting." | tee -a $log
+                echo "$DATE 99 $backupset # backup disk $BACKUPDESTDIR is not mounted" >> $STATUSLOG
+                return 99
+            fi
             # check the space again
             freespace=$(df -m "$BACKUPDESTDIR" | awk "NR==2{print \$4}")
             if [[ $freespace -le $MINSPACE ]]; then

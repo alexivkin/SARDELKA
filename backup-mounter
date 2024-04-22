@@ -61,12 +61,18 @@ if [[ "$unmount" != "-u" ]]; then
     sudo cryptsetup luksOpen $TEMP_MOUNT/$E2EE_FILE $E2EE_FILE --key-file $KEY_FILES/$E2EE_FILE
     if [[ ! -e /dev/mapper/$E2EE_FILE ]]; then
         echo "*** Can't unencrypt and open $TEMP_MOUNT/$E2EE_FILE with $KEY_FILES/$E2EE_FILE"
-        echo "Attempting to unmount $TEMP_MOUNT..."
+        #echo "Attempting to unmount $TEMP_MOUNT..."
         #sudo fusermount -u "$TEMP_MOUNT"
         exit 73
     fi
     echo "Mounting /dev/mapper/$E2EE_FILE device to a local filesystem at $BACKUPDESTDIR..."
     sudo mount /dev/mapper/$E2EE_FILE $BACKUPDESTDIR
+    # check if it mounted correctly
+    grep -qs "$BACKUPDESTDIR" /proc/mounts
+    if [[ $? -eq 1 ]]; then
+        echo "*** Backup disk $BACKUPDESTDIR is not mounted. Exiting."
+        exit 99
+    fi
 else
     echo "Unmounting /dev/mapper/$E2EE_FILE from $BACKUPDESTDIR..."
     sudo umount $BACKUPDESTDIR
