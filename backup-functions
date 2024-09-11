@@ -500,6 +500,9 @@ configurationBackup(){
         fi
         echo "Errors collected during the last run from stderr:" | tee -a "$log"
         cat "$errorlog" | tee -a "$log"
+        rm ${filelogs[@]}
+        rm $archive
+        rmdir $tempdir
     fi
     teardownBackup
 }
