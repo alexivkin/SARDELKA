@@ -4,7 +4,8 @@
 # install into anacron with
 #   sudo ln -s ~/bin/backupTools/backup-monitor /etc/cron.daily/
 
-source "${0%/*}/backup-functions" # load common functions from the same folder as this file
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )" # folder where all logs and supporting files are kept. Defaults to the same folder this script is in
+source "$DIR/backup-functions" # load common functions from the same folder as this file
 
 log=$DIR/logs/monitor.log
 

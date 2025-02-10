@@ -1,0 +1,288 @@
+#!/bin/bash
+#
+# A script to simplify setting up the end-to-end encrypted backup on the client side
+#
+# Prerequisites:
+#   A backup server that has a backup disk and a way to access it via SSH or NFS
+#   Local backup.config and backup.schedule properly setup
+#
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )" # folder where all logs and supporting files are kept. Defaults to the same folder this script is in
+source "$DIR/backup-functions" # load common constants and functions from the same folder as this file
+
+#set -x
+set -euo pipefail
+
+if [[ ! -f $DIR/backup.schedule ]]; then
+    echo "Create a $DIR/backup.schedule file and setup at least one backup command
+        Edit backup.schedule and specify which server to use and what file to mount like this: e2ee://[sshalias]/[folder/file]
+     sshalias is the host alias in the ~/.ssh/config file that specifies which user and key to use to connect to which server for the backup
+    folder/file is the location of the encrypted file on the backup server
+    "
+    exit 2
+fi
+
+BACKUP_LIST=$(sed "s/#.*//" $DIR/backup.schedule | tr '\r' ' ' | grep -E "e2...?:" | cut -f 1 | tr '\r' ' ')
+
+if [[ $# -lt 2 ]]; then
+    echo 'Please provide a name of the backup and the the backup storage size. e.g 1T, 2T'
+    echo '  A quick way to estimate real size and show top 10 folder: du -sh * | sort -rh | head -10'
+    echo '  Or rsync that will be slower but take excludes into account: rsync -an --stats  . | grep "total size is"'
+    echo "The backup name should be one of these defined in the $DIR/backup.schedule:"
+    echo "$BACKUP_LIST"
+    exit 3
+fi
+
+BACKUP_NAME=$1
+BACKUP_SIZE=$2
+# map short name into the full name
+destURL=$(sed -nr "s/^${BACKUP_NAME}\s.*(e2...?:[^ ,]*)/\1/p" $DIR/backup.schedule | head -1 | tr -d '\r' )
+
+if [[ -z $destURL ]]; then
+    echo "Provide a name of the backup as a name from the list below:"
+    echo -e "$BACKUP_LIST"
+    exit 1
+fi
+
+# ------------- Setup the backup client if needed
+mkdir -p $LOGS_DIR
+mkdir -p $KEYFILES_DIR
+
+# check if we can sudo mount, without asking for the sudo password in the first place
+if ! SUDO_ASKPASS=/bin/false sudo -A mount >/dev/null 2>&1; then
+    echo "> Giving $USER an ability to run LUKS and mount commands without requiring a password"
+    echo "$USER ALL = (root) NOPASSWD:  /usr/sbin/cryptsetup,/usr/bin/umount,/usr/bin/rsync,/usr/sbin/ufw,/usr/bin/mount,/usr/bin/notify-send" | sudo tee -a /etc/sudoers
+fi
+
+# this sudo should come after the check for passwordless sudo, otherwise it will cause a false negative, since the password will be cached by sudo
+sudo mkdir -p $BACKUPDESTDIR
+
+# uncomment user_allow_other in /etc/fuse.conf
+if grep -q '#user_allow_other' /etc/fuse.conf; then
+    echo "> Allowing root to mount fuse user mounts"
+    sudo sed -i 's/#user_allow_other/user_allow_other/' /etc/fuse.conf;
+fi
+
+# for e2nfs install NFS common locally
+if [[ ${destURL} =~ e2nfs://.* ]]; then
+    if ! dpkg -s nfs-common >/dev/null; then
+        echo "> Installing NFS tools"
+        sudo apt -y install nfs-common
+    fi
+fi
+
+if [[ $GUI_PROMPT == true ]]; then
+    if ! dpkg -s libnotify-bin >/dev/null; then
+        echo "> Installing libnotify tools"
+        sudo apt -y install libnotify-bin
+    fi
+fi
+
+# Setup SSH if one is not setup already
+# Create the ssh user key on the system you are backing up. SSH is used not for various checks and SSHFS
+
+BACKUP_SSH_USER=$HOSTNAME$USER
+# parse the server name out of the connection string
+SERVER=$(sed -r "s|.*//(.*@)?||;s|/.*||"  <<< "$destURL")
+# now grab the real hostname from what could the SSH alias
+SERVER_REAL=$(ssh -TG $SERVER | sed -n "s/^hostname //p")
+# try the SSH port
+if ! nc -z -w 3 $SERVER_REAL 22 2>/dev/null; then
+    echo "Backup server '$SERVER_REAL' is not reachable."
+    exit 52
+fi
+# check if SSH needs to be setup and configure it
+if [[ ${destURL} =~ e2ee://.* ]]; then
+    if [[ ! -f $KEYFILES_DIR/$SERVER-$BACKUP_SSH_USER ]]; then
+        echo "> Generating the SSH key"
+        ssh-keygen -N "" -t ed25519 -f $KEYFILES_DIR/$SERVER-$BACKUP_SSH_USER
+        echo "> Copying the public ssh key to /.ssh/authorized_keys and setting up proper access rights"
+        scp $KEYFILES_DIR/$SERVER-$BACKUP_SSH_USER.pub $SERVER:/tmp/authorized_keys
+        # Creating the user on the backup server with no password (only SSH key is allowed) like this
+        ssh $SERVER << EOF
+        sudo useradd -m -s /bin/bash $BACKUP_SSH_USER
+        sudo mkdir ~$BACKUP_SSH_USER/.ssh
+        sudo chown -R $BACKUP_SSH_USER:$BACKUP_SSH_USER ~$BACKUP_SSH_USER/.ssh/
+        sudo chmod 700 ~$BACKUP_SSH_USER/.ssh/
+        sudo chmod 600 ~$BACKUP_SSH_USER/.ssh/authorized_keys
+EOF
+        # Adding this segment to the beginning of the config file, since it is top to bottom processed
+        sed -i "1i\
+            Host $SERVER\
+            User $BACKUP_SSH_USER\
+            PubkeyAuthentication yes\
+            IdentityFile $KEYFILES_DIR/$SERVER-$BACKUP_SSH_USER\
+        " ~/.ssh/config
+    fi
+    # Test the SSH connection to the backup server
+    if ! ssh $SERVER -- exit; then
+        echo "SSH to $SERVER as $BACKUP_SSH_USER is not working"
+        exit 3
+    fi
+fi
+
+# Grab the server SSH key
+if [[ -z $KEYS_OF_SERVERS ]]; then
+    SERVER_KEY=$(ssh-keyscan $SERVER_REAL 2>&1 | grep ssh-ed25519)
+    echo 'KEYS_OF_SERVERS=("'$$SERVER_KEY'")' >> $DIR/backup.config
+else
+    # check if the server key is already specified
+    match=false
+    for i in ${!KEYS_OF_SERVERS[@]}; do
+        if ssh-keyscan $SERVER_REAL 2>/dev/null | grep -q "${KEYS_OF_SERVERS[$i]}"; then
+            match=true
+            break
+        fi
+    done
+    if [[ $match == false ]]; then
+        SERVER_KEY=$(ssh-keyscan $SERVER_REAL 2>&1 | grep ssh-ed25519)
+        echo "Add this to the list of server keys: $SERVER_KEY in the $DIR/backup.config"
+        exit 1
+    fi
+fi
+
+# Setup the end to end backup file
+
+SERVER=$(sed -r "s|.*//(.*@)?||;s|/.*||" <<< "$destURL")
+E2EE_FOLDER=$(sed -r "s|.*//$SERVER/(.*)/.*|/\1|" <<< "$destURL")
+E2EE_FILE=$(sed -r "s|.*/||" <<< "$destURL")
+TEMP_MOUNT=/tmp/$SERVER
+
+if grep -qs "^$BACKUPDESTDIR" /proc/mounts; then
+    echo "Backup E2EE folder $BACKUPDESTDIR is already mounted."
+    exit 99
+fi
+
+if grep -qs "$TEMP_MOUNT" /proc/mounts; then
+    echo "$TEMP_MOUNT is already mounted. Please unmount and start again"
+    exit 71
+fi
+mkdir -p $TEMP_MOUNT
+
+if [[ ${BACKUP_NAME} =~ e2ee://.* ]]; then
+    echo "> Mounting $SERVER:$E2EE_FOLDER/ via SSHFS to $TEMP_MOUNT..."
+    sshfs -o reconnect,ConnectTimeout=10,ServerAliveInterval=10,allow_root $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT # need allow_root here because cryptsetup has to run as root to create /dev/mapper devices
+else
+    echo "> Mounting $SERVER:$E2EE_FOLDER/ via NFS to $TEMP_MOUNT..."
+    sudo mount $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT
+fi
+
+if [[ -f $TEMP_MOUNT/$E2EE_FILE ]]; then
+    echo "The backup store $TEMP_MOUNT/$E2EE_FILE already exists"
+else
+    echo "> Allocating backup_size of backup space in $TEMP_MOUNT/$E2EE_FILE"
+    # Note that you can also create a sparse file of the size you'd like it to grow to eventually with `truncate -s $BACKUP_SIZE $TEMP_MOUNT/$E2EE_FILE`
+    # The sparse file advantage is that it will only take the space required for backups, so there is no wasted space.
+    # The disadvantage is that it may become fragmented over time if there are other sparse backup files next to it that are also being used.
+    # Another disadvantage is if the space on the disk hosting it runs out, the inner file system will become corrupted.
+    fallocate -l $BACKUP_SIZE $TEMP_MOUNT/$E2EE_FILE
+    chmod o+w $TEMP_MOUNT/$E2EE_FILE
+
+    echo "> Formatting it for LUKS"
+    dd if=/dev/urandom of=$KEYFILES_DIR/$E2EE_FILE bs=4096 count=1 > /dev/null
+    chmod 400 $KEYFILES_DIR/$E2EE_FILE
+    cryptsetup luksFormat $TEMP_MOUNT/$E2EE_FILE --key-file $KEYFILES_DIR/$E2EE_FILE -q
+fi
+
+sudo cryptsetup luksOpen $TEMP_MOUNT/$E2EE_FILE --key-file $KEYFILES_DIR/$E2EE_FILE $E2EE_FILE
+if [[ ! -e /dev/mapper/$E2EE_FILE ]]; then
+    echo "*** Can't unencrypt and open $TEMP_MOUNT/$E2EE_FILE with $KEYFILES_DIR/$E2EE_FILE"
+    exit 73
+fi
+
+if ! lsblk -f /dev/mapper/$E2EE_FILE | grep -qs ext4; then
+    echo "> Creating the ext4 filesystem inside /dev/mapper/$E2EE_FILE"
+    # Create the file system It may take couple of minutes as it tries to pre-create everything
+    sudo mkfs.ext4 -m0 -E lazy_itable_init=0,lazy_journal_init=0 /dev/mapper/$E2EE_FILE
+fi
+
+sudo mount /dev/mapper/$E2EE_FILE $BACKUPDESTDIR
+
+if ! grep -qs "^/dev/mapper/$E2EE_FILE" /proc/mounts; then
+    echo "Backup disk /dev/mapper/$E2EE_FILE can't be mounted to $BACKUPDESTDIR."
+    exit 99
+fi
+
+# assign ownership of the internal filesystem after mounting it to be able to create subfolders
+# this is different from the ownership of the original mount point
+sudo chown $USER:$USER $BACKUPDESTDIR
+
+# Unmounting everything, so it does not block the actual backup
+echo "> Unmounting /dev/mapper/$E2EE_FILE from $BACKUPDESTDIR..."
+sudo umount $BACKUPDESTDIR
+if grep -qs "/dev/mapper/$E2EE_FILE" /proc/mounts; then
+    echo "*** Failed to unmount /dev/mapper/$E2EE_FILE from $BACKUPDESTDIR."
+    exit 98
+fi
+echo "> Closing /dev/mapper/$E2EE_FILE..."
+sudo cryptsetup luksClose $E2EE_FILE
+if [[ -e /dev/mapper/$E2EE_FILE ]]; then
+    echo "*** Can't close $E2EE_FILE"
+    exit 73
+fi
+sleep 1
+echo "> Unmounting $SERVER:$E2EE_FOLDER/ from $TEMP_MOUNT"
+if [[ ${BACKUP_NAME} =~ e2ee://.* ]]; then
+    fusermount -u $TEMP_MOUNT
+else
+    sudo umount $TEMP_MOUNT
+fi
+rmdir $TEMP_MOUNT
+
+# copy default includes and excludes
+TYPE=$(grep "^${BACKUP_NAME}\s" backup.schedule | awk '{print $4}' | cut -d ',' -f 1)
+if [[ ! -f ${BACKUP_NAME}.exclude ]]; then
+    if [[ $TYPE =~ /home.* ]]; then
+        echo "> Copying home.exclude.sample to ${BACKUP_NAME}.exclude"
+    	cp home.exclude.sample ${BACKUP_NAME}.exclude
+    elif [[ $TYPE == '/' ]]; then
+    	echo "> Copying system.exclude.sample to ${BACKUP_NAME}.exclude"
+    	cp system.exclude.sample ${BACKUP_NAME}.exclude
+    else
+    	echo "> Creating a blank ${BACKUP_NAME}.exclude file"
+    	touch ${BACKUP_NAME}.exclude
+    fi
+fi
+
+# Install timers
+if [[ ! -f /etc/systemd/system/backup.timer ]]; then
+    echo "> Creating the systemd service and the timer"
+    sudo tee /etc/systemd/system/backup.timer > /dev/null << EOF
+[Unit]
+Description=SARDELKA Backup Timer
+
+[Timer]
+OnUnitActiveSec=1d
+OnBootSec=1min
+
+[Install]
+WantedBy=timers.target
+EOF
+    sudo tee /etc/systemd/system/backup.service > /dev/null << EOF
+[Unit]
+Description=SARDELKA Backup Service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash ${DIR}/backup
+User=$USER
+Group=$USER
+StandardOutput=null
+#StandardError=null
+EOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable backup.timer
+fi
+
+echo "> Done.
+
+To run the backup now execute:
+
+sudo systemctl start backup.service
+
+Do not forget to backup your $KEYFILES_DIR/$E2EE_FILE somewhere separately and/or add a passphrase to the LUKS encrypted header. To ad the passphrase run:
+
+mkdir $TEMP_MOUNT; sudo mount $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT
+cryptsetup luksAddKey $TEMP_MOUNT/$E2EE_FILE --key-file $KEYFILES_DIR/$E2EE_FILE
+sudo umount $TEMP_MOUNT; rm $TEMP_MOUNT
+"

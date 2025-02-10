@@ -1,10 +1,9 @@
 #!/bin/bash
 # Mount an end-to-end encrypted fs
-
 #set -euo pipefail
 
-realme=$(realpath $0) # dereference if called via a symlink
-source "${realme%/*}/backup-functions" # load common functions from the same folder as this file
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )" # folder where all logs and supporting files are kept. Defaults to the same folder this script is in
+source "$DIR/backup-functions" # load common functions from the same folder as this file
 
 BACKUP_LIST=$(sed "s/#.*//" $DIR/backup.schedule | tr '\r' ' ' | grep -E "e2...?:" | cut -f 1 | tr '\r' ' ')
 
@@ -36,7 +35,7 @@ E2EE_FILE=$(sed -r "s|.*/||" <<< "$destURL")
 TEMP_MOUNT=/tmp/$SERVER
 
 if [[ "$unmount" != "-u" ]]; then
-    if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
+    if grep -qs "^$BACKUPDESTDIR" /proc/mounts; then
         echo "*** $BACKUPDESTDIR is already mounted."
         exit 98
     fi
@@ -58,9 +57,9 @@ if [[ "$unmount" != "-u" ]]; then
         exit 72
     fi
     echo "Opening remote file $TEMP_MOUNT/$E2EE_FILE as a local device..."
-    sudo cryptsetup luksOpen $TEMP_MOUNT/$E2EE_FILE $E2EE_FILE --key-file $KEY_FILES/$E2EE_FILE
+    sudo cryptsetup luksOpen $TEMP_MOUNT/$E2EE_FILE $E2EE_FILE --key-file $KEYFILES_DIR/$E2EE_FILE
     if [[ ! -e /dev/mapper/$E2EE_FILE ]]; then
-        echo "*** Can't unencrypt and open $TEMP_MOUNT/$E2EE_FILE with $KEY_FILES/$E2EE_FILE"
+        echo "*** Can't unencrypt and open $TEMP_MOUNT/$E2EE_FILE with $KEYFILES_DIR/$E2EE_FILE"
         #echo "Attempting to unmount $TEMP_MOUNT..."
         #sudo fusermount -u "$TEMP_MOUNT"
         exit 73
@@ -68,16 +67,15 @@ if [[ "$unmount" != "-u" ]]; then
     echo "Mounting /dev/mapper/$E2EE_FILE device to a local filesystem at $BACKUPDESTDIR..."
     sudo mount /dev/mapper/$E2EE_FILE $BACKUPDESTDIR
     # check if it mounted correctly
-    grep -qs "$BACKUPDESTDIR" /proc/mounts
-    if [[ $? -eq 1 ]]; then
-        echo "*** Backup disk $BACKUPDESTDIR is not mounted. Exiting."
+    if ! grep -qs "/dev/mapper/$E2EE_FILE" /proc/mounts; then
+        echo "*** Backup disk $BACKUPDESTDIR is not mounted."
         exit 99
     fi
 else
     echo "Unmounting /dev/mapper/$E2EE_FILE from $BACKUPDESTDIR..."
     sudo umount $BACKUPDESTDIR
-    if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
-        echo "*** Failed to unmount $BACKUPDESTDIR."
+    if grep -qs "/dev/mapper/$E2EE_FILE" /proc/mounts; then
+        echo "*** Failed to unmount /dev/mapper/$E2EE_FILE from $BACKUPDESTDIR."
         exit 98
     fi
     echo "Closing /dev/mapper/$E2EE_FILE..."

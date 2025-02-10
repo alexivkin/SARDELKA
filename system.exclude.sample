@@ -1,0 +1,41 @@
+# ** used to skip all files but not folders to simplify bare metal restore
+*~
+/proc/**
+/sys/**
+/dev/**
+/media/**
+/tmp/**
+/home/**
+/run/**
+/lib/udev/**
+/var/lib/apt/lists/**
+#/var/lib/dpkg/info/ - not a good idea to exclude. it is a small folder, but cumbersome to recover
+/var/backups/**
+/var/run/**
+/var/tmp/**
+/var/crash/**
+/var/spool/cups/**
+/var/spool/postfix/**
+# skip inaccessible folders even by root. Only the non-slash terminated string below works properly
+/var/cache/system-tools-backends
+# skip caches, for example /var/lib/sddm/.cache/
+**/.cache/**
+**/cache/**
+/var/cache/**
+/var/lib/**/journal/
+# /var/log/** - keep the logs, they may come handy during recovery
+# but skip unimportant logs and logs that take a lot of space
+/var/log/Xorg.0.log*
+/var/log/rsyncd
+# docker images are generally recoverable
+/var/lib/docker/overlay2/**
+# kind of useless to include locate db - you can search with find in a pinch 
+/var/lib/mlocate/mlocate.db*
+# other recoverable files that change often
+/usr/src/linux-headers*
+# big recoverable files
+/usr/share/virtualbox/VBoxGuestAdditions.iso
+# KVMs and docker volumes
+/var/lib/libvirt/images/
+/var/lib/docker/volumes/
+/swapfile

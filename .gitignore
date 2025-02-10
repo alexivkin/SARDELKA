@@ -5,9 +5,8 @@ logs/
 *.status
 *.list
 *.include
-*.includeexclude
 *.bak
-*-launcher-as-*
 *.secrets
 nohup.out
 tmp.*
+.keyfiles

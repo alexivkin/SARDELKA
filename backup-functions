@@ -1,6 +1,5 @@
 #!/bin/bash
-# Backup routines
-# 2022 (c) Alex Ivkin
+# Backup routines 2025 (c) Alex Ivkin
 #
 # TODO:
 #    Remove hardcoded sudo's from some functions (e.g. analyze)
@@ -12,8 +11,15 @@
 #    Add exit traps function finish { blah }; trap finish EXIT; trap finish SIGHUP SIGINT SIGTERM; # for ctrl-c
 #IFS=$'\n\t'
 
-#source "${0%/*}/backup.config" # get backup configuration variables
-source "${BASH_SOURCE[0]%/*}/backup.config" # get backup configuration variables
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )" # folder where all logs and supporting files are kept. Defaults to the same folder this script is in
+BACKUP_USAGE=$DIR/backup-analyzer-stats.list         # backup analyzer statistics
+BACKUP_CONTENTS=$DIR/backup-analyzer-contents.list   # backup analyzer details
+STATUS_LOG=$DIR/backup.status 		                 # common log where status for all backups is kept
+LOGS_DIR=$DIR/logs                                   # folder for local backup logs
+SSH_CONTROL_SOCKET=$DIR/ssh_control_socket           # file handle to control the SSH tunnel with
+KEYFILES_DIR=$DIR/.keyfiles		                     # location of the LUKS keyfiles for End-to-End encryption
+
+source "$DIR/backup.config"                          # get backup configuration variables
 
 initBackup() {
     # Perform basic checks before the backup
@@ -26,12 +32,12 @@ initBackup() {
     #   sets "backupset", "log", destURL variables
     #   returns error number if short on space or other errors encountered
     backupset=$1
-    log=$DIR/logs/$1.log
-    errorlog=$DIR/logs/$1.errors
+    log=$LOGS_DIR/$1.log
+    errorlog=$LOGS_DIR/$1.errors
     destURL=$3
     source=$2
-    if [[ ! -d "$DIR/logs/" ]]; then
-        mkdir "$DIR/logs/";
+    if [[ ! -d "$LOGS_DIR/" ]]; then
+        mkdir "$LOGS_DIR/";
     fi
     DATE=$(date +%Y-%m-%d.%H-%M-%S)     # date format to use. if you change this make sure the date can be read by 'checkBackupTime()
     echo "---[$DATE]------------------------------------------------" >> $log
@@ -39,11 +45,11 @@ initBackup() {
         # security validation - check if we're backing up over the correct interface set for the defined network
         if [[ -n $IF && -z "$(/sbin/ip addr show $IF)" ]]; then
             echo "*** Misconfiguration: network interface $IF does not exist" | tee -a $log
-            echo "$DATE 20 $backupset # misconfiguration. Network interface $IF does not exists ">> $STATUSLOG
+            echo "$DATE 20 $backupset # misconfiguration. Network interface $IF does not exists ">> $STATUS_LOG
             return 50
             if [[ -z "$(/sbin/ip addr show $IF to $NETMASK)" ]]; then
                 echo "*** Disallowed network: $IF is not on $NETMASK" | tee -a $log
-                echo "$DATE 50 $backupset # disallowed network. $IF is not on $NETMASK" >> $STATUSLOG
+                echo "$DATE 50 $backupset # disallowed network. $IF is not on $NETMASK" >> $STATUS_LOG
                 return 50
             fi
         fi
@@ -53,7 +59,7 @@ initBackup() {
             ping -c 1 $ROUTERIP 1>/dev/null
             if [[ -z "$(arp -a $ROUTERIP | grep $ROUTERMAC)" ]]; then
                 echo "*** Wrong network: $ROUTERIP router MAC is not $ROUTERMAC" | tee -a $log
-                echo "$DATE 51 $backupset # disallowed network. network: $ROUTERIP router MAC is not $ROUTERMAC" >> $STATUSLOG
+                echo "$DATE 51 $backupset # disallowed network. network: $ROUTERIP router MAC is not $ROUTERMAC" >> $STATUS_LOG
                 return 51
             fi
         fi
@@ -64,7 +70,7 @@ initBackup() {
         nc -z -w 3 $SERVER_REAL 22 # try the SSH port
         if [[ $? -ne 0 ]]; then
             echo "*** Backup server not reachable." | tee -a $log
-            echo "$DATE 52 $backupset # can not reach $SERVER" >> $STATUSLOG
+            echo "$DATE 52 $backupset # can not reach $SERVER" >> $STATUS_LOG
             return 52
         fi
         # security validation - grab the server key and make sure it matches our records
@@ -77,12 +83,12 @@ initBackup() {
         done
         if [[ $match == false ]]; then
             echo "*** Backup server signature does not match any provided in the list." | tee -a $log
-            echo "$DATE 53 $backupset # bad signature for $SERVER" >> $STATUSLOG
+            echo "$DATE 53 $backupset # bad signature for $SERVER" >> $STATUS_LOG
             return 53
         fi
         if [[ $destURL == "rsync:"* ]]; then # check remote folder for rsync from the config
-            REMOTEDEST=$(ssh -n $SERVER "sed -ne 's/^BACKUPDESTDIR=\([^ ]*\).*/\1/p' $(dirname $STATUSLOG)/backup.config")
-        else
+            REMOTEDEST=$(ssh -n $SERVER "sed -ne 's/^BACKUPDESTDIR=\([^ ]*\).*/\1/p' $(dirname $STATUS_LOG)/backup.config")
+        elif [[ $destURL == "e2ee:"* ]]; then
             REMOTEDEST=$(ssh -n $SERVER "sed -rn 's|.*//[^/]*/(.*)/.*|/\1|p' <<< \"$destURL\"")
         fi
         if [[ -n $REMOTEDEST ]]; then
@@ -90,7 +96,7 @@ initBackup() {
             ssh -n $SERVER "grep -qs '$REMOTEDEST' /proc/mounts"
             if [[ $? -eq 1 ]]; then
                 echo "*** Remote backup disk $REMOTEDEST is not mounted on $SERVER. Exiting." | tee -a $log
-                echo "$DATE 99 $backupset # backup disk $REMOTEDEST is not mounted on $SERVER." >> $STATUSLOG
+                echo "$DATE 99 $backupset # backup disk $REMOTEDEST is not mounted on $SERVER." >> $STATUS_LOG
                 return 99
             fi
             if [[ ! ($destURL == "e2ee:"* || $destURL == "e2nfs:"*) ]]; then # only check space on the remote drive for non-e2ee locations, since there may be free space inside the e2ee file/fs
@@ -98,36 +104,37 @@ initBackup() {
                 freespace=$(ssh -n $SERVER "df -m \"$REMOTEDEST\"" | awk "NR==2{print \$4}")
                 if [[ $freespace -le $MINSPACE ]]; then
                     echo "*** Backup space is running short. Only $freespace MB left on $REMOTEDEST!. Aborting." | tee -a $log
-                    echo "$DATE 95 $backupset # backup free space on $SERVER is under the allowed limit of $freespace MB" >> $STATUSLOG
+                    echo "$DATE 95 $backupset # backup free space on $SERVER is under the allowed limit of $freespace MB" >> $STATUS_LOG
                     return 95
                 fi
             fi
-        else
-            echo "*** Can not query remote disk $REMOTEDEST for free space. Exiting." | tee -a $log
-            echo "$DATE 53 $backupset # can not check free space on the remote disk $REMOTEDEST on $SERVER" >> $STATUSLOG
-            return 53
+        #else
+            # this is a non-critical failure
+            #echo "> Can not query remote disk $REMOTEDEST for free space." | tee -a $log
+            # echo "$DATE 53 $backupset # can not check free space on the remote disk $REMOTEDEST on $SERVER" >> $STATUS_LOG
+            #return 53
         fi
         # now start e2ee mounting
         if [[ $destURL == "e2ee:"* || $destURL == "e2nfs:"* ]]; then
             TEMP_MOUNT=/tmp/$SERVER
             E2EE_FOLDER=$(sed -r "s|.*//$SERVER/(.*)/.*|/\1|"  <<< "$destURL")
             E2EE_FILE=$(sed -r "s|.*/||"  <<< "$destURL")
-            # first some sanity checks for the local FS
-            if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
+            # first some sanity checks for the local FS. Use space before the dest name to make sure we're not matching the NFS source, only the destination folder
+            if grep -qs " $BACKUPDESTDIR" /proc/mounts; then
                 echo "*** $BACKUPDESTDIR is already mounted. Unmount and start again" | tee -a $log
-                echo "$DATE 98 $backupset # backup disk $BACKUPDESTDIR is already mounted" >> $STATUSLOG
+                echo "$DATE 98 $backupset # backup disk $BACKUPDESTDIR is already mounted" >> $STATUS_LOG
                 return 98
             fi
             if grep -qs "$TEMP_MOUNT" /proc/mounts; then
                 echo "*** $TEMP_MOUNT is already mounted. Please unmount and start again"  | tee -a $log
-                echo "$DATE 71 $backupset # sshfs is already mounted to $TEMP_MOUNT" >> $STATUSLOG
+                echo "$DATE 71 $backupset # sshfs is already mounted to $TEMP_MOUNT" >> $STATUS_LOG
                 return 71
             fi
             # sanity checks for the remote FS (Actually this is already checked above, keeping it here for consistency)
             #ssh -n $SERVER "grep -qs '$E2EE_FOLDER' /proc/mounts"
             #if [[ $? -eq 1 ]]; then
             #    echo "*** Remote backup disk $E2EE_FOLDER is not mounted on $SERVER. Exiting." | tee -a $log
-            #    echo "$DATE 99 $backupset # remote backup disk $E2EE_FOLDER is not mounted on $SERVER." >> $STATUSLOG
+            #    echo "$DATE 99 $backupset # remote backup disk $E2EE_FOLDER is not mounted on $SERVER." >> $STATUS_LOG
             #    return 99
             #fi
             # now onto the mounting
@@ -141,38 +148,39 @@ initBackup() {
             fi
             if [[ ! -f $TEMP_MOUNT/$E2EE_FILE ]]; then
                 echo "*** $TEMP_MOUNT/$E2EE_FILE file is not found" | tee -a $log
-                echo "$DATE 72 $backupset # problem mounting sshfs from $SERVER:$E2EE_FOLDER/ to $TEMP_MOUNT" >> $STATUSLOG
+                echo "$DATE 72 $backupset # problem mounting sshfs from $SERVER:$E2EE_FOLDER/ to $TEMP_MOUNT" >> $STATUS_LOG
                 return 72
             fi
             echo "Opening remote file $TEMP_MOUNT/$E2EE_FILE as a local device..." | tee -a $log
-            sudo cryptsetup luksOpen $TEMP_MOUNT/$E2EE_FILE $E2EE_FILE --key-file $KEY_FILES/$E2EE_FILE
+            sudo cryptsetup luksOpen $TEMP_MOUNT/$E2EE_FILE $E2EE_FILE --key-file $KEYFILES_DIR/$E2EE_FILE
             if [[ ! -e /dev/mapper/$E2EE_FILE ]]; then
-                echo "*** Can't unencrypt and open $TEMP_MOUNT/$E2EE_FILE with $KEY_FILES/$E2EE_FILE" | tee -a $log
+                echo "*** Can't unencrypt and open $TEMP_MOUNT/$E2EE_FILE with $KEYFILES_DIR/$E2EE_FILE" | tee -a $log
                 echo "Attempting to unmount $TEMP_MOUNT..." | tee -a $log
                 if [[ $destURL == "e2ee:"* ]]; then
                     fusermount -u "$TEMP_MOUNT"
                 else
                     sudo umount "$TEMP_MOUNT"
                 fi
-                echo "$DATE 73 $backupset # cant luksOpen $TEMP_MOUNT/$E2EE_FILE" >> $STATUSLOG
+                echo "$DATE 73 $backupset # cant luksOpen $TEMP_MOUNT/$E2EE_FILE" >> $STATUS_LOG
                 return 73
             fi
             echo "Mounting /dev/mapper/$E2EE_FILE device to a local filesystem at $BACKUPDESTDIR..." | tee -a $log
             sudo mount /dev/mapper/$E2EE_FILE $BACKUPDESTDIR
             # check if it mounted correctly
-            grep -qs "$BACKUPDESTDIR" /proc/mounts
-            if [[ $? -eq 1 ]]; then
-                echo "*** Backup disk $BACKUPDESTDIR is not mounted. Exiting." | tee -a $log
-                echo "$DATE 99 $backupset # backup disk $BACKUPDESTDIR is not mounted" >> $STATUSLOG
+            if ! grep -qs "/dev/mapper/$E2EE_FILE" /proc/mounts; then
+                echo "*** Backup disk /dev/mapper/$E2EE_FILE is not mounted at $BACKUPDESTDIR. Exiting." | tee -a $log
+                echo "$DATE 99 $backupset # backup disk /dev/mapper/$E2EE_FILE is not mounted at $BACKUPDESTDIR" >> $STATUS_LOG
                 return 99
             fi
             # check the space again
             freespace=$(df -m "$BACKUPDESTDIR" | awk "NR==2{print \$4}")
             if [[ $freespace -le $MINSPACE ]]; then
                 echo "*** Backup space is running short. Only $freespace MB left on $BACKUPDESTDIR!. Exiting." | tee -a $log
-                echo "$DATE 95 $backupset # backup free space is under the allowed limit of $freespace MB" >> $STATUSLOG
+                echo "$DATE 95 $backupset # backup free space is under the allowed limit of $freespace MB" >> $STATUS_LOG
                 return 95
             fi
+            # make sure the local backup folder is present (in case of the very first backup)
+            mkdir -p $BACKUPDESTDIR/$backupset
         else
             BACKUPDESTDIR=$REMOTEDEST # define BACKUPDESTDIR remote rsync backups, so they can start
         fi
@@ -180,19 +188,17 @@ initBackup() {
         grep -qs "$BACKUPDESTDIR" /proc/mounts
         if [[ $? -eq 1 ]]; then
             echo "*** Backup disk $BACKUPDESTDIR is not mounted. Exiting." | tee -a $log
-            echo "$DATE 99 $backupset # backup disk $BACKUPDESTDIR is not mounted" >> $STATUSLOG
+            echo "$DATE 99 $backupset # backup disk $BACKUPDESTDIR is not mounted" >> $STATUS_LOG
             return 99
         fi
         freespace=$(df -m "$BACKUPDESTDIR" | awk "NR==2{print \$4}")
         if [[ $freespace -le $MINSPACE ]]; then
             echo "*** Backup space is running short. Only $freespace MB left on $BACKUPDESTDIR!. Exiting." | tee -a $log
-            echo "$DATE 95 $backupset # backup free space is under the allowed limit of $freespace MB" >> $STATUSLOG
+            echo "$DATE 95 $backupset # backup free space is under the allowed limit of $freespace MB" >> $STATUS_LOG
             return 95
         fi
         # make sure the local backup folder is present (in case of the very first backup)
-        if [[ ! -d "$BACKUPDESTDIR/$backupset/" ]]; then
-            mkdir $BACKUPDESTDIR/$backupset
-        fi
+        mkdir -p $BACKUPDESTDIR/$backupset
     fi
     return 0
 }
@@ -201,19 +207,20 @@ teardownBackup() {
     # Cleanup e2ee mounts so they are not dangling
     #destURL=$1
     if [[ $destURL == "e2ee:"* || $destURL == "e2nfs:"* ]]; then
-        echo "Unmounting /dev/mapper/$E2EE_FILE from $BACKUPDESTDIR..." | tee -a $log
+        echo "Disconnecting from $SERVER" | tee -a $log
+        echo "Unmounting /dev/mapper/$E2EE_FILE from $BACKUPDESTDIR..." >> $log
         sudo umount "$BACKUPDESTDIR" | tee -a $log
-        if grep -qs "$BACKUPDESTDIR" /proc/mounts; then
-            echo "*** Failed to unmount $BACKUPDESTDIR."  | tee -a $log
+        if grep -qs "/dev/mapper/$E2EE_FILE" /proc/mounts; then
+            echo "*** Failed to unmount /dev/mapper/$E2EE_FILE from $BACKUPDESTDIR." | tee -a $log
         fi
-        echo "Closing /dev/mapper/$E2EE_FILE..." | tee -a $log
+        echo "Closing /dev/mapper/$E2EE_FILE..." >> $log
         sudo cryptsetup luksClose $E2EE_FILE  | tee -a $log
         if [[ -e /dev/mapper/$E2EE_FILE ]]; then
             echo "*** Can't close $E2EE_FILE" | tee -a $log
         fi
         # wait a sec before unmount because cryptsetup may take a little while for the remote FS
         sleep 1
-        echo "Unmounting $SERVER:$E2EE_FOLDER/ from $TEMP_MOUNT..." | tee -a $log
+        echo "Unmounting $SERVER:$E2EE_FOLDER/ from $TEMP_MOUNT..." >> $log
         if [[ $destURL == "e2ee:"* ]]; then
             fusermount -u "$TEMP_MOUNT" | tee -a $log
         else
@@ -258,7 +265,7 @@ syntheticFullBackup() {
             if [[ $? -ne 0 ]]; then
                 echo "Link to the previous backup is broken: $linkdest -> $LASTBACKUPFULLNAME" | tee -a $log
                 echo "If you wish to continue re-link it to the latest correct backup or remove the broken link to start a complete full backup" | tee -a $log
-                echo "$DATE 69 $backupset # error setting up a remote backup to $SERVER due to a bad symlink to the previous backup" >> $STATUSLOG
+                echo "$DATE 69 $backupset # error setting up a remote backup to $SERVER due to a bad symlink to the previous backup" >> $STATUS_LOG
                 teardownBackup
                 return
             fi
@@ -278,7 +285,7 @@ syntheticFullBackup() {
             if [ ! -e "$LASTBACKUPFULLNAME" ]; then
                 echo "Link to the previous backup is broken: $linkdest -> $LASTBACKUPFULLNAME" | tee -a $log
                 echo "If you wish to continue re-link it to the latest correct backup or remove the broken link to start a complete full backup" | tee -a $log
-                echo "$DATE 88 $backupset # error setting up a backup due to a bad symlink to the previous backup" >> $STATUSLOG
+                echo "$DATE 88 $backupset # error setting up a backup due to a bad symlink to the previous backup" >> $STATUS_LOG
                 teardownBackup
                 return
             fi
@@ -309,17 +316,17 @@ syntheticFullBackup() {
         # this is because rsyncd (the server side) need permissions to set group ownership to match that of the parent folder. you could change rsyncd to run as root to make it go away
         # 2. some further backups to remote systems, like TSM can't work with relative links
         if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
-            ssh -n $SERVER "mv $linkdest.$DATE.inflight $linkdest.$DATE; ln -snf $linkdest.$DATE $linkdest; echo \"$DATE 0 $backupset - successful synthetic full backup from $backupset\" >> $STATUSLOG"
-            echo "$DATE 0 $backupset # successful synthetic full backup to $SERVER" >> $STATUSLOG
+            ssh -n $SERVER "mv $linkdest.$DATE.inflight $linkdest.$DATE; ln -snf $linkdest.$DATE $linkdest; echo \"$DATE  0 $backupset - successful synthetic full backup from $backupset\" >> $STATUS_LOG"
+            echo "$DATE  0 $backupset # successful synthetic full backup to $SERVER" >> $STATUS_LOG
         else
             # use relative for local backups do the following:
             #ln -snf $(basename $linkdest.$DATE) $linkdest
             mv $linkdest.$DATE.inflight $linkdest.$DATE
             ln -snf $linkdest.$DATE $linkdest
-            echo "$DATE 0 $backupset # successful synthetic full local backup" >> $STATUSLOG
+            echo "$DATE  0 $backupset # successful synthetic full local backup" >> $STATUS_LOG
             if [[ $destURL == "e2ee:"* || $destURL == "e2nfs:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
                 if grep -qs "$TEMP_MOUNT" /proc/mounts; then  # check if $TEMP_MOUNT is still mounted otherwise writing a file there will pollute the mount point
-                    echo "$DATE 0 $backupset" >> $TEMP_MOUNT/status
+                    echo "$DATE  0 $backupset" >> $TEMP_MOUNT/status
                 fi
             fi
         fi
@@ -328,11 +335,11 @@ syntheticFullBackup() {
         echo "Errors collected during the last run from stderr:" | tee -a $log
         cat $errorlog | tee -a $log
         if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
-            ssh -n $SERVER "mv $linkdest.$DATE.inflight $linkdest.$DATE.partial; echo \"$DATE $error $backupset - rsync error during the synthetic full backup from $backupset\" >> $STATUSLOG"
-            echo "$DATE $error $backupset # rsync error during the synthetic full backup to $SERVER" >> $STATUSLOG
+            ssh -n $SERVER "mv $linkdest.$DATE.inflight $linkdest.$DATE.partial; echo \"$DATE $error $backupset - rsync error during the synthetic full backup from $backupset\" >> $STATUS_LOG"
+            echo "$DATE $error $backupset # rsync error during the synthetic full backup to $SERVER" >> $STATUS_LOG
         else
             mv $linkdest.$DATE.inflight $linkdest.$DATE.partial
-            echo "$DATE $error $backupset # rsync error during the synthetic full local backup " >> $STATUSLOG
+            echo "$DATE $error $backupset # rsync error during the synthetic full local backup " >> $STATUS_LOG
             if [[ $destURL == "e2ee:"* || $destURL == "e2nfs:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
                 if grep -qs "$TEMP_MOUNT" /proc/mounts; then  # check if $TEMP_MOUNT is still mounted otherwise writing a file there will pollute the mount point
                     echo "$DATE $error $backupset" >> $TEMP_MOUNT/status
@@ -378,13 +385,13 @@ fullBackup(){
         #  24     Partial transfer due to vanished source files - could happen due to a backup of a live system
         echo "*** Full backup for $backupset on $DATE successful" | tee -a "$log"
         if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
-            ssh -n $SERVER "echo \"$DATE 0 $backupset - successful full backup from $backupset\" >> $STATUSLOG"
-            echo "$DATE 0 $backupset # successful full backup to $SERVER" >> $STATUSLOG
+            ssh -n $SERVER "echo \"$DATE  0 $backupset - successful full backup from $backupset\" >> $STATUS_LOG"
+            echo "$DATE  0 $backupset # successful full backup to $SERVER" >> $STATUS_LOG
         else
-            echo "$DATE 0 $backupset # successful full local backup"  >>$STATUSLOG
+            echo "$DATE  0 $backupset # successful full local backup"  >>$STATUS_LOG
             if [[ $destURL == "e2ee:"* || $destURL == "e2nfs:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
                 if grep -qs "$TEMP_MOUNT" /proc/mounts; then  # check if $TEMP_MOUNT is still mounted otherwise writing a file there will pollute the mount point
-                    echo "$DATE 0 $backupset" >> $TEMP_MOUNT/status
+                    echo "$DATE  0 $backupset" >> $TEMP_MOUNT/status
                 fi
             fi
         fi
@@ -393,10 +400,10 @@ fullBackup(){
         echo "Errors collected during the last run from stderr:" | tee -a "$log"
         cat "$errorlog" | tee -a "$log"
         if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
-            ssh -n $SERVER "echo \"$DATE $error $backupset # rsync error during the full backup from $backupset\" >> $STATUSLOG"
-            echo "$DATE $error $backupset # rsync error during the full backup to $SERVER" >> $STATUSLOG
+            ssh -n $SERVER "echo \"$DATE $error $backupset # rsync error during the full backup from $backupset\" >> $STATUS_LOG"
+            echo "$DATE $error $backupset # rsync error during the full backup to $SERVER" >> $STATUS_LOG
         else
-            echo "$DATE $error $backupset # rsync error during the local backup" >> $STATUSLOG
+            echo "$DATE $error $backupset # rsync error during the local backup" >> $STATUS_LOG
             if [[ $destURL == "e2ee:"* || $destURL == "e2nfs:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
                 if grep -qs "$TEMP_MOUNT" /proc/mounts; then  # check if $TEMP_MOUNT is still mounted otherwise writing a file there will pollute the mount point
                     echo "$DATE $error $backupset" >> $TEMP_MOUNT/status
@@ -418,10 +425,10 @@ folderBackup() {
     error=$?
     if [[ $error -eq 0 ]]; then
         echo "*** Folder backup of $source to $dest on $DATE successful" | tee -a "$log"
-        echo "$DATE 0 $backupset # successful folder backup" >>$STATUSLOG
+        echo "$DATE  0 $backupset # successful folder backup" >>$STATUS_LOG
     else
         echo "*** Folder backup of $source to $dest on $DATE finished with error $error" | tee -a "$log"
-        echo "$DATE $error $backupset # error during the folder backup" >> $STATUSLOG
+        echo "$DATE $error $backupset # error during the folder backup" >> $STATUS_LOG
         echo "Errors collected during the last run from stderr:" | tee -a "$log"
         cat "$errorlog" | tee -a "$log"
     fi
@@ -474,12 +481,12 @@ configurationBackup(){
         #  24     Partial transfer due to vanished source files - could happen due to a backup of a live system
         echo "*** Configuration backup for $system on $DATE successful" | tee -a "$log"
         if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
-            ssh -n $SERVER "echo \"$DATE 0 $backupset # successful configuration backup from $backupset\" >> $STATUSLOG"
-            echo "$DATE 0 $backupset # successful configuration backup to $SERVER" >> $STATUSLOG
+            ssh -n $SERVER "echo \"$DATE  0 $backupset # successful configuration backup from $backupset\" >> $STATUS_LOG"
+            echo "$DATE  0 $backupset # successful configuration backup to $SERVER" >> $STATUS_LOG
         else
-            echo "$DATE 0 $backupset # successful local configuration backup" >>$STATUSLOG
+            echo "$DATE  0 $backupset # successful local configuration backup" >>$STATUS_LOG
             if [[ $destURL == "e2ee:"* || $destURL == "e2nfs:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
-                echo "$DATE 0 $backupset" >> $TEMP_MOUNT/status
+                echo "$DATE  0 $backupset" >> $TEMP_MOUNT/status
             fi
         fi
         rm ${filelogs[@]}
@@ -488,10 +495,10 @@ configurationBackup(){
     else
         echo "*** Configuration backup for $backupset on $DATE finished with error $error" | tee -a "$log"
         if [[ -n $destURL && $destURL == "rsync:"* ]]; then  # backing up to remote rsync
-            ssh -n $SERVER "echo \"$DATE $error $backupset # error during the configuration backup from $backupset\">> $STATUSLOG"
-            echo "$DATE $error $backupset # error during the configuration backup to $SERVER" >> $STATUSLOG
+            ssh -n $SERVER "echo \"$DATE $error $backupset # error during the configuration backup from $backupset\">> $STATUS_LOG"
+            echo "$DATE $error $backupset # error during the configuration backup to $SERVER" >> $STATUS_LOG
         else
-            echo "$DATE $error $backupset # error during the local configuration backup " >> $STATUSLOG
+            echo "$DATE $error $backupset # error during the local configuration backup " >> $STATUS_LOG
             if [[ $destURL == "e2ee:"* || $destURL == "e2nfs:"* ]]; then  # if backing up to an e2ee mounted partition save the status remotely
                 if grep -qs "$TEMP_MOUNT" /proc/mounts; then  # check if $TEMP_MOUNT is still mounted otherwise writing a file there will pollute the mount point
                     echo "$DATE $error $backupset" >> $TEMP_MOUNT/status
@@ -542,25 +549,25 @@ tsmBackup() {
                 ssh -fNM -S $SSH_CONTROL_SOCKET -L 1800:localhost:1500 -p $SSH_PORT $USER@$SERVER
                 if [[ $? -ne 0 ]]; then
                    echo "*** Server did not wake up." | tee -a $log
-                   echo "$DATE 10 $SERVER # server did not wake up" >> $STATUSLOG
+                   echo "$DATE 10 $SERVER # server did not wake up" >> $STATUS_LOG
                    return 10
                 fi
             else
-                echo "$DATE 9 $SERVER # ssh tunnel failed" >> $STATUSLOG
+                echo "$DATE  9 $SERVER # ssh tunnel failed" >> $STATUS_LOG
                 return 9
             fi
         fi
     fi
     # may need SHELL=/bin/bash and LANG=en_US.UTF-8
-    echo Backup started. Please check $log for progress. Long running 'tee' fails when executed from cron hence it can not be used here.
+    echo "Backup started. Please check $log for progress. Long running 'tee' fails when executed from cron hence it can not be used here."
     sudo /usr/bin/nice -n 19 /opt/tivoli/tsm/client/ba/bin/dsmc inc >> $log 2>&1
     error=$?
     if [[ $error -eq 0 ]]; then
         echo "*** $SERVER backup for $DATE successful" | tee -a $log
-        echo "$DATE 0 $SERVER # tsm backup done" >> $STATUSLOG
+        echo "$DATE 0 $SERVER # tsm backup done" >> $STATUS_LOG
     else
         echo "*** $SERVER backup for $DATE finished with $error" | tee -a $log
-        echo "$DATE $error $SERVER # tsm backup error" >> $STATUSLOG
+        echo "$DATE $error $SERVER # tsm backup error" >> $STATUS_LOG
     fi
     # terminate the tunnel
     ssh -O exit -S $SSH_CONTROL_SOCKET localhost > /dev/null
@@ -608,13 +615,13 @@ checkBackupTime (){
         #if [[ $var =~ .*@.*\/.* ]]; then
         if [[ $var == rsync:* ]]; then
             SERVER=$(sed -r "s|.*//(.*@)?||;s|/.*||"  <<< "$destURL")
-            backup_status_log=$(ssh -n $SERVER "cat $STATUSLOG" )     # SSH may eat up stdio, use -n to avoid this. Could also do < /dev/null
+            backup_status_log=$(ssh -n $SERVER "cat $STATUS_LOG" )     # SSH may eat up stdio, use -n to avoid this. Could also do < /dev/null
             #echo -e $backup_status_log >&2
             break
         fi
     done
-    if [[ -z $SERVER && -f $STATUSLOG ]]; then #grab locally
-        backup_status_log="$(cat $STATUSLOG)"
+    if [[ -z $SERVER && -f $STATUS_LOG ]]; then #grab locally
+        backup_status_log="$(cat $STATUS_LOG)"
     fi
     if [[ -z $backup_status_log ]]; then echo "No record of $backupset"; return; fi
     lastsuccessraw=$(grep -P " 0 $backupset(\s|\r?$)" <<< "$backup_status_log" | tr '\r' ' ' | awk "END{print \$1}") # matches a success, ignoring anything past name of the backup. Matches dos and unix end of lines. tr is to remove effects of \r on the output printout (blanking out line on print)
@@ -630,11 +637,11 @@ checkBackupTime (){
         #if [ -n "$3" ]; then
         #   # todo grab appropriate parts of a multi-part backup that feeds into the same log
         #   issuetext=$issuetext"Tail of the log:\n\n"$(tail ~/bin/$3)"\n"
-        if [[ -s $DIR/logs/$backupset.log ]]; then # if file exists and not empty
-            echo "Log: $(tail -n 1 $DIR/logs/$backupset.log)"
+        if [[ -s $LOGS_DIR/$backupset.log ]]; then # if file exists and not empty
+            echo "Log: $(tail -n 1 $LOGS_DIR/$backupset.log)"
         fi
-        if [[ -s $DIR/logs/$backupset.errors ]]; then
-            echo "Error Log:\n$(tail -n 1 $DIR/logs/$backupset.errors)"
+        if [[ -s $LOGS_DIR/$backupset.errors ]]; then
+            echo "Error Log:\n$(tail -n 1 $LOGS_DIR/$backupset.errors)"
         fi
         echo "\n"
         #issueflag=1
@@ -895,8 +902,8 @@ rmWithProgress(){
 
 shipOut (){
     # Move a backup folder for a synthetic full backup, displaying progress
-    log=$DIR/logs/ship-out.log
-    errorlog=$DIR/logs/ship-out.errors
+    log=$LOGS_DIR/ship-out.log
+    errorlog=$LOGS_DIR/ship-out.errors
     DATE=$(date +%Y-%m-%d.%H-%M-%S)     # date format to use. if you change this make sure the date can be read by 'checkBackupTime()
     # check free space on the $BACKUPARCHIVE first
     grep -qs "$BACKUPARCHIVE" /proc/mounts

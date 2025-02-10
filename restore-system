@@ -7,5 +7,10 @@ date >> ~/bin/restore-system.log
 # network level rsync - slower but abstracts the backup folder location
 #sudo rsync -varz --delete --delete-excluded --stats --password-file backup-system.secrets --include-from backup-system.include --exclude-from backup-system.exclude --log-file backup-system.log / rsync://rsyncuser@system/somesystembackup
 #
+# you may need to manually create the following folders
+#/var/cache/**/
+#/var/log/**/
+#/var/run/**/
+#
 # file system level rsync
 sudo rsync -varz --stats --log-file ~/bin/restore-system.log /media/backups/some-system/ .

@@ -1,5 +1,4 @@
 logs/
-oldcode/
 *.exclude
 *.config
 *.schedule
@@ -9,5 +8,5 @@ oldcode/
 *.include
 *.includeexclude
 *.bak
-*-launcher-as-alex
 *.secrets
+.keyfiles

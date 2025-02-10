@@ -1,36 +1,22 @@
 #------------[ Configuration variables ] -----------
 #
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )" # folder where all logs and supporting files are kept. Defaults to the same folder this script is in
-
 BACKUPDESTDIR=/media/Backups 		# backup destination
-BACKUPARCHIVE=/media/BackupsArchives 	# define this variable if you want to archive old backups to a secondary location after certain time
-STATUSLOG=$DIR/backup.status 		# common log where status for all backups is kept
+BACKUPARCHIVE=/media/BackupsArchives 	# define this variable if you want to archive old backups to a secondary location after a certain time
 MINSPACE=10000 				# minimum free space before aborting a backup, in megabytes
-GUI_PROMPT=true				# show notices on the X screen. Requires to apt install libnotify-bin
+GUI_PROMPT=true				# show notices on the X screen. Requires to apt install libnotify-bin. Comment out to disable
 
 # Backup analyzer configuration
-BACKUP_RATINGS=$DIR/backup-analyzer-ratings.list
-BACKUP_USAGE=$DIR/backup-analyzer-disk-usage.list
-BACKUP_CONTENTS=$DIR/backup-analyzer-contents.list
 BIGGEST_FILES_NUM=5			# how many biggest files to report
 FREQUENT_FILES_NUM=15			# how many frequently backed up files to report
 TOTAL_SIZE_FILES_NUM=15			# how many files using the most disk space across all backups to report
 
-# Remote backup configuration
-# if defined, check that there is an interface by the given name that's configured for the correct network. 
-#IF=eth0				# interface that is allowed to be used for backups
+# Remote backup safety checks
+#IF=eth0				# interface that is allowed to be used for backups. If defined, check that there is an interface by the given name that's configured for the correct network. 
 #NETMASK="192.168.1.0/24" 		# expected network on $IF
-# If defined check the (router) IP and MAC before backing up to validate that we are on the right network  
-#ROUTERIP="192.168.1.1" 		# router ip to validate that we are on the right network
-ROUTERMAC="00:11:22:aa:bb:cc" 		# expected router MAC address for that $IP
-
-# an array of backup servers keys to validate against before connecting. Get one by running `ssh-keyscan <server>`. 
-# backup will proceed if the ssh-keyscan of the target server matches at least one of the signatures in the array below
-KEYS_OF_SERVERS=("server ssh-ed25519 <key>")	
-
-#WOL_MAC="00:11:22:aa:bb:cc"		# MAC address of the remote server, if you want to send wake on lan packets to it when it is not reachable
-SSH_CONTROL_SOCKET=$DIR/ssh_control_socket # file handle to control the SSH tunnel with
-KEY_FILES=/root/.keyfiles		# location of the LUKS keyfiles for End-to-End encryption
+#ROUTERIP="192.168.1.1" 		# router ip to validate that we are on the right network. If defined check the (router) IP and MAC before backing up to validate that we are on the right network
+#ROUTERMAC="00:11:22:aa:bb:cc" 		# expected router MAC address for that $ROUTERIP
+#WOL_MAC="00:11:22:aa:bb:cc"		# MAC address of the remote TSM server, to send a wake on lan packet when it is not reachable. used only for TSM
+KEYS_OF_SERVERS=("server ssh-ed25519 <key>") # an array of backup servers SSH keys to validate against before connecting. Get one by running `ssh-keyscan <server>`.	
 
 # Backup monitor configuration
 ALERT_TOLERANCE_FACTOR=2 		# multiplication factor for the number of days that the backup has not completed successfuly before invoking the alert script

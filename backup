@@ -17,7 +17,7 @@ function notify-gui() {
     sudo -u $user DISPLAY=$display DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus notify-send "$@"
 }
 
-echo "Starting backup processing..."
+echo "Starting backup processing $USER..."
 errortext=""
 while read -r -a b; do
     if [[ -n ${b[0]} ]]; then   # if not blank
