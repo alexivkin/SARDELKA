@@ -71,7 +71,7 @@ if [[ ${destURL} =~ e2nfs://.* ]]; then
     fi
 fi
 
-if [[ $GUI_PROMPT == true ]]; then
+if [[ $GUI_PROMPT == "true" ]]; then
     if ! dpkg -s libnotify-bin >/dev/null; then
         echo "> Installing libnotify tools"
         sudo apt -y install libnotify-bin
@@ -127,14 +127,14 @@ if [[ -z $KEYS_OF_SERVERS ]]; then
     echo 'KEYS_OF_SERVERS=("'$$SERVER_KEY'")' >> $DIR/backup.config
 else
     # check if the server key is already specified
-    match=false
+    match="false"
     for i in ${!KEYS_OF_SERVERS[@]}; do
         if ssh-keyscan $SERVER_REAL 2>/dev/null | grep -q "${KEYS_OF_SERVERS[$i]}"; then
-            match=true
+            match="true"
             break
         fi
     done
-    if [[ $match == false ]]; then
+    if [[ $match == "false" ]]; then
         SERVER_KEY=$(ssh-keyscan $SERVER_REAL 2>&1 | grep ssh-ed25519)
         echo "Add this to the list of server keys: $SERVER_KEY in the $DIR/backup.config"
         exit 1

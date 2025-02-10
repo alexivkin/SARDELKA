@@ -2,13 +2,7 @@
 #
 BACKUPDESTDIR=/media/Backups 		# backup destination
 BACKUPARCHIVE=/media/BackupsArchives 	# define this variable if you want to archive old backups to a secondary location after a certain time
-MINSPACE=10000 				# minimum free space before aborting a backup, in megabytes
 GUI_PROMPT=true				# show notices on the X screen. Requires to apt install libnotify-bin. Comment out to disable
-
-# Backup analyzer configuration
-BIGGEST_FILES_NUM=5			# how many biggest files to report
-FREQUENT_FILES_NUM=15			# how many frequently backed up files to report
-TOTAL_SIZE_FILES_NUM=15			# how many files using the most disk space across all backups to report
 
 # Remote backup safety checks
 #IF=eth0				# interface that is allowed to be used for backups. If defined, check that there is an interface by the given name that's configured for the correct network. 

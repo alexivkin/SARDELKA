@@ -9,15 +9,15 @@
 #       To counter set -u in valid cases of using unassigned variable. Use default values x=${1:-DEFAULT_VALUE}; e.g var=${1:-} to set var blank if $1 is not set
 #       To counter set -e use "|| true" or set +e; command; set -e
 #    Add exit traps function finish { blah }; trap finish EXIT; trap finish SIGHUP SIGINT SIGTERM; # for ctrl-c
-#IFS=$'\n\t'
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )" # folder where all logs and supporting files are kept. Defaults to the same folder this script is in
 BACKUP_USAGE=$DIR/backup-analyzer-stats.list         # backup analyzer statistics
 BACKUP_CONTENTS=$DIR/backup-analyzer-contents.list   # backup analyzer details
-STATUS_LOG=$DIR/backup.status 		                 # common log where status for all backups is kept
+STATUS_LOG=$DIR/backup.status 		             # common log where status for all backups is kept
 LOGS_DIR=$DIR/logs                                   # folder for local backup logs
 SSH_CONTROL_SOCKET=$DIR/ssh_control_socket           # file handle to control the SSH tunnel with
-KEYFILES_DIR=$DIR/.keyfiles		                     # location of the LUKS keyfiles for End-to-End encryption
+KEYFILES_DIR=$DIR/.keyfiles		             # location of the LUKS keyfiles for End-to-End encryption
+MINSPACE=${MINSPACE:-10000}			     # minimum free space before aborting a backup, in megabytes
 
 source "$DIR/backup.config"                          # get backup configuration variables
 
@@ -74,14 +74,14 @@ initBackup() {
             return 52
         fi
         # security validation - grab the server key and make sure it matches our records
-        match=false
+        match="false"
         for i in ${!KEYS_OF_SERVERS[@]}; do
             if ssh-keyscan $SERVER_REAL 2>/dev/null | grep -q "${KEYS_OF_SERVERS[$i]}"; then
-                match=true
+                match="true"
                 break
             fi
         done
-        if [[ $match == false ]]; then
+        if [[ $match == "false" ]]; then
             echo "*** Backup server signature does not match any provided in the list." | tee -a $log
             echo "$DATE 53 $backupset # bad signature for $SERVER" >> $STATUS_LOG
             return 53
@@ -99,7 +99,7 @@ initBackup() {
                 echo "$DATE 99 $backupset # backup disk $REMOTEDEST is not mounted on $SERVER." >> $STATUS_LOG
                 return 99
             fi
-            if [[ ! ($destURL == "e2ee:"* || $destURL == "e2nfs:"*) ]]; then # only check space on the remote drive for non-e2ee locations, since there may be free space inside the e2ee file/fs
+            if [[ ! ($destURL == "e2ee:"* || $destURL == "e2nfs:"*) ]]; then # only check space on the remote drive for non-e2ee locations, since there may be free space inside the e2ee file
                 # backupdestdir would not be defined when using rsync URL
                 freespace=$(ssh -n $SERVER "df -m \"$REMOTEDEST\"" | awk "NR==2{print \$4}")
                 if [[ $freespace -le $MINSPACE ]]; then
@@ -350,7 +350,7 @@ syntheticFullBackup() {
     teardownBackup
 }
 
-fullBackup(){
+fullBackup() {
     # full backup with rsync
     # options
     #   - source folder to backup
@@ -434,7 +434,7 @@ folderBackup() {
     fi
 }
 
-configurationBackup(){
+configurationBackup() {
     # backup system configuration
     # option
     #   - folder under the BACKUPDESTDIR that contains system configs
@@ -524,19 +524,19 @@ tsmBackup() {
     SSH_PORT=$3
     echo "*** Starting TSM backup to $SERVER for $DATE" | tee -a $log
     # connection test: nc -z -w 3 localhost 1800 if [[ $? -ne 0 ]]; then
-    neednewtunnel=true
+    neednewtunnel="true"
     if [[ -e $SSH_CONTROL_SOCKET ]]; then # if control socket is there
         # check if it is alive
         ssh -O check -S $CONTROLSOCK localhost > /dev/null
         if [[ $? -eq 0 ]]; then
             echo "*** The ssh tunnel is already present." | tee -a $log
-            neednewtunnel=false
+            neednewtunnel="false"
         else
             # delete misbehaving socket
             rm $CONTROLSOCK
         fi
     fi
-    if [[ $neednewtunnel == true ]]; then
+    if [[ $neednewtunnel == "true" ]]; then
         echo "*** Setting up the SSH to $SERVER:$SSH_PORT" | tee -a $log
         ssh -fNM -S $SSH_CONTROL_SOCKET -L 1800:localhost:1500 -p $SSH_PORT $USER@$SERVER
         if [[ $? -ne 0 ]]; then
@@ -575,13 +575,13 @@ tsmBackup() {
 
 
 # The datacalc routines
-date2stamp () {
+date2stamp() {
     date --utc --date "$1" +%s
 }
-stamp2date () {
+stamp2date() {
     date --utc --date "1970-01-01 $1 sec" "+%Y-%m-%d %T"
 }
-dateDiff (){
+dateDiff() {
     case $1 in
         -s)   sec=1;      shift;;
         -m)   sec=60;     shift;;
@@ -596,7 +596,7 @@ dateDiff (){
     echo $((diffSec/sec*abs))
 }
 
-checkBackupTime (){
+checkBackupTime() {
     # check if the backups completed successfuly within the past N days
     # this function returns error string by printing it to stdout, *** NO OTHER ECHOS ARE ALLOWED ***
     # options
@@ -707,7 +707,7 @@ analyzeBackup() {
         totalsize=0
         uniquecount=0
         uniquesize=0
-        start=`date +%s`
+        start=${date +%s}
         unset backuphash # clear list of files in this backup
         declare -A backuphash #contains files unque to this backup
         #oldIFS="$IFS"
@@ -796,7 +796,7 @@ analyzeBackup() {
                 printf "Total: %'dMB in %'d files. Changes: %'dMB ($sizeper%%) in %'d files ($fileper%%). $newcount non-repeating changes ($uniquerating%% exclusivity). " $(echo "scale=0;$totalsize/1048576"|bc -l) $totalcount $(echo "scale=0;$uniquesize/1048576"|bc -l) $uniquecount
                 printf "%'7dMB/%'7dMB (%5.2f%%)\t%'8d/%'9d (%5.2f%%)\t%'8d exclusive (%3.0f%%)\t$i\n" $(echo "scale=0;$uniquesize/1048576"|bc -l) $(echo "scale=0;$totalsize/1048576"|bc -l) $sizeper $uniquecount $totalcount $fileper $newcount $uniquerating >> $BACKUP_USAGE
         fi
-        end=`date +%s`
+        end=${date +%s}
         echo "Took $((end-start)) seconds."
         #if [[ $backupcounter -eq 4 ]]; then break; fi
     done
@@ -857,7 +857,7 @@ analyzeBackup() {
     #done | sort -rn >> $BACKUP_CONTENTS
 }
 
-rmWithProgress(){
+rmWithProgress() {
     # remove a backup folder for a synthetic full backup displaying progress
     # the total number of files/folders to delete is estimated from the previously recorded data by backup-analyzer. If missing the files are counted by 'find'
     if [[ -d "$1" ]]; then
@@ -900,7 +900,7 @@ rmWithProgress(){
     fi
 }
 
-shipOut (){
+shipOut() {
     # Move a backup folder for a synthetic full backup, displaying progress
     log=$LOGS_DIR/ship-out.log
     errorlog=$LOGS_DIR/ship-out.errors

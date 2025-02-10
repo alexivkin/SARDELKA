@@ -10,8 +10,13 @@
 
 #set -euo pipefail
 
-realme=$(realpath $0) # dereference if called via a symlink
-source "${realme%/*}/backup-functions" # load common functions from the same folder as this file
+# Backup analyzer default configuration 
+BIGGEST_FILES_NUM=${BIGGEST_FILES_NUM:-15}			# how many biggest files to report
+FREQUENT_FILES_NUM=${FREQUENT_FILES_NUM:-20}			# how many frequently backed up files to report
+TOTAL_SIZE_FILES_NUM=${TOTAL_SIZE_FILES_NUM:-20}		# how many files using the most disk space across all backups to report
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd )" # folder where all logs and supporting files are kept. Defaults to the same folder this script is in
+source "$DIR/backup-functions" # load common constants and functions from the same folder as this file
 force=${1:-}
 
 echo "Analyzing backups. Results will be detailed in the logs:"

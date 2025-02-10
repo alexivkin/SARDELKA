@@ -35,13 +35,13 @@ while read -r -a b; do
                     continue
                 fi
                 echo "Launching ${b[1]} ${b[0]} ${parms[@]} ..."
-                if [[ $GUI_PROMPT ]]; then
+                if [[ $GUI_PROMPT == "true" ]]; then
                     notify-gui "Launching ${b[1]} ${b[0]} ..."
                 fi
                 ${b[1]} ${b[0]} "${parms[@]}"   # launch the backup command. Using this syntax so the array expands correctly into individual parameters
                 # after everything is done, check that it was done properly
                 validate=$(checkBackupTime ${b[0]} ${b[2]} "${parms[@]}") # check again to record any errors
-                if [[ $GUI_PROMPT ]]; then
+                if [[ $GUI_PROMPT == "true" ]]; then
                     if [[ -n $validate ]]; then
                         # shorten up the error for GUI reporting, so it can fit in the alert box
                         shorterror=$(echo -e "$validate" | tr -d '\n' | sed 's/.*\*\*\*//')
