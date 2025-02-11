@@ -2,25 +2,27 @@
 
 _**S**uper **A**wesome **R**sync **D**eduplicating **E**ncrypting and **L**in**K**ing **A**utomation_
 
-A complete backup solution using nothing but Bash and Rsync. The main features are the **synthetic full backups** and **end-to-end encryption**.
+A complete backup solution using nothing, but Bash and Rsync. The main features are the **synthetic full backups** and **end-to-end encryption**.
 
-A _synthetic full backup_ is a full backup that only the uses the disk space of an incremental backup. It's a snapshot created with minimal size, similar to a copy-on-write technology of the time-machine and btrfs.
-It does so by using hardlinks for any information that did not change, and only copying what did change. You get the best of both worlds: a full backup, always identical to the source at the time when it was taken, but consuming only the space required for the an incremental backup (changes since the last backup).
+A _synthetic full backup_ is a full backup that only the uses the disk space of an incremental backup, similar to the copy-on-write technology of the time-machine and btrfs. 
+It does so by using hardlinks for any files that did not change, and only copying what did change. You get the best of both worlds: a full backup, always identical to the source at the time when it was taken, 
+and only using the space required for the an incremental backup, i.e changes since the last backup.
 
-The _end to end encryption_ is done via just-in-time mounting of remote LUKS encrypted volumes over SSH. The remote system can only stores a sparse encrypted file, never the encryption keys. Even if these files are leaked there is no way to get the original backup data.
+The _end to end encryption_ is done via just-in-time mounting of remote LUKS encrypted file stores. The backup server never sees the encryption keys. Even if the file stores are leaked there is no way to get the original backup data from them.
 
 Other awesome features:
 
-* Backup of a local system or a remote system through ssh, to a a local folder, a remote rsync server or a remote Tivoli Storage Management server
+* Backup of a local system or a remote system through ssh/rsync/nfs to a local folder or a remote ssh/rsync/nfs server.
 * Backup **scheduling and monitoring** to ensure they run on the scheduled time. Alert on backup failure, including remote backups that did not come in when they were expected
 * **Rotating** backups - keep the last n days, or n copies of the backups
-* **Shipping out** backups to the secondary storage
+* **Shipping out** backups to the secondary storage 
 * Keeping track of how many files and bytes changed in the backup, and are unique to this backup in the set of backups, to make intelligent calls about old backup cleanup
 * Running as a **docker container**
+* Support for backing up to a remote Tivoli Storage Management server
 
 Types of the backup supported:
 
-* **Incremental full backup** - aka synthetic full backup, keep full copies hardlinked to each other
+* **Incremental full backup** - aka synthetic full backup, keep full copies hardlinked to each other.
 * **Full backup** - a full rsync copy. There is an option to use secondary folder to move all replaced/deleted files for longer storage.
 * **Folder backup** - tar.gz  time-stamped copies of a folder
 * **Configuration backup** - a system configuration backup - firewall config, installed packages and file/folder lists
@@ -47,38 +49,37 @@ Types of the backup supported:
 * **backup-functions** - not a script, but a bash library, containing Bash code for all backup functions invoked by the scripts above
 * **restore** - does backups, but in reverse
 
-## Setup
+## Running
 
 ### Running the backup scripts natively
 
-* Clone the repo
-* Give your local user an ability to run LUKS and mount commands without requiring password. Running `sudo visudo` and add `<user here> ALL = (root) NOPASSWD:  /usr/sbin/cryptsetup,/usr/bin/umount,/usr/bin/rsync,/usr/sbin/ufw,/usr/bin/mount`. Make sure it comes after all other statements that may apply to your user, as the last statement takes precidence.
-* Rename `backup.config.sample` and `backup.schedule.sample` to `backup.config` and `backup.schedule` respectively. Edit both files to configure your backups
-* Create `[backupname].exclude` file for each backup, even if it's empty. You can use the included sample for reference
-* If using sshfs, allow non-root sshfs users to mount as root. `sudo vi /etc/fuse.conf` and uncomment `user_allow_other`
-* For GUI notifications install libnotify with `apt install libnotify-bin`
+* Copy `backup.config.sample` and `backup.schedule.sample` to `backup.config` and `backup.schedule` respectively. Edit both files to configure your backups.
+* Run `backup-setup`
+
+It will perform the following for you:
+
+* Set up a way to connect to the backup server. An ssh user with the private/public key set up on the backup server for SSHFS or NFS exported share for NFS.
+* For end-to-end encrypted backups: 
+  * Create a storage file on the backup server containing the encrypted filesystem, which will later be mounted with cryptsetup. 
+  * Create a local LUKs key to decrypt the remote file containing the encrypted filesystem. This key never leaves the client to ensure true e2e encryption.
+* Schedule the backup for periodic runs using systemd timers
+
+* Run `backup` or `sudo systemd start backup` or wait for the systemd timer to kick it off.
 
 ### Running as a docker container
 
-* Create the `backup.schedule` that can can contain only one line: `docker syntheticFullBackup 1 /source,/backups`. This names backups "docker" and sets a one per day frequency.
-* Create the `backup.config` file with, at the very least, these settings:
-```
-DIR=/sardelka				# dir where all the scripts and configs are
-BACKUPDESTDIR=/backups 			# backup destination
-STATUSLOG=$DIR/backup.status 		# common log where status for all backups is kept
-MINSPACE=10000 				# minimum free space before aborting a backup, in megabytes
-```
-* Run `docker-compose up`.  The container will verify that the backup is necessary, do the backup and stop.
-* To do the backup without the docker compose run this monstrocity:
-`docker run --rm --name backup -v "$(pwd)/backup.config":/sardelka/backup.config -v "$(pwd)/backup.schedule":/sardelka/backup.schedule -v $(pwd)/logs:/sardelka/logs -v "$(pwd)/backup.status":/sardelka/backup.status -v "/my/source/folder":/source -v "/my/backup/folder":/backups alexivkin/sardelka
+* Copy `backup.config.sample` and `backup.schedule.sample` to `backup.config` and `backup.schedule` respectively. Edit both files to configure your backups.
+* Run `docker-compose up`.  The container will verify that the backup is necessary, do the backup and stop. Althernatively you can run the backup without the docker compose with this monstrocity:
 
-### End-to-end encrypted backups
+`docker run --rm --name backup -v "$(pwd)/backup.config":/sardelka/backup.config -v "$(pwd)/backup.schedule":/sardelka/backup.schedule -v $(pwd)/logs:/sardelka/logs -v "$(pwd)/backup.status":/sardelka/backup.status -v "/my/source/folder":/source -v "/my/backup/folder":/backups alexivkin/sardelka`
+
+## End-to-end encrypted backups
 
 End-to-end encryption uses EXT4 fs stored inside a LUKS encrypted file. This allows backup scripts to treat end-to-end encrypted backup as local backups, except for the mounting and unmounting the file systems.
 The mounting can be done with or without transport level encryption.The first one uses SSH, but is slower and prone to hangups, the second one uses NFS, but does not encrypt metadata about the connection. The data itself is encrypted either way.
 Note that although is possible to encrypt NFS traffic metadata with `stunnel`, it's not currently implemented. An alternative to `stunnel` is using a VPN, e.g. `wireguard` to encrypt the NFS traffic.
 
-#### E2EE server
+### E2EE server setup via NFS
 
 To configure NFS export do the following:
 
@@ -98,6 +99,8 @@ sudo chmod 777 /media/$disk
 touch /media/$disk/status
 chown o+rw /media/$disk/status
 ```
+
+### E2EE server setup via SSH
 
 To configure the SSH connection you need to:
 
@@ -120,7 +123,6 @@ Host backupserver
 ```
 5. Test SSH login from the client via `ssh e2eebackup` to ensure the server is known to the local ssh.
 
-
 You might want to fix the IP for the backup server. Set the following in `/etc/network/interfaces.d/eth0`
 ```
 auto eth0
@@ -130,19 +132,6 @@ netmask 255.255.255.0
 gateway 192.168.1.1
 dns-nameservers 192.168.1.2
 ```
-
-#### E2EE client
-
-Run `backup-setup` to configure your client for the E2EE backup.
-
-It will set up the following:
-
-* A way to connect to the backup server. An ssh user with the private/public key set up on the backup server for SSHFS or NFS exported share for NFS.
-* Create a file on the backup server containing the encrypted filesystem, which will later be mounted with cryptsetup. 
-* Create a local LUKs key to decrypt the remote file containing the encrypted filesystem. This key never leaves the client to ensure true e2e encryption.
-* Schedule the backup for periodic runs using systemd timers
-
-For full details see the `backup-setup`  script.
 
 Do not forget to backup your keyfile somewhere separately, otherwise the backups will be useless if they are stored a filesystem you are backing up and that filesystem is corrupted. 
 It may also be usefull to add a passphrase to the LUKS headers.
