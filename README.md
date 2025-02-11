@@ -75,10 +75,10 @@ It may also be usefull to add a passphrase to the LUKS headers as a manual recov
 
 ##  Backup server setup
 
-There are three supported ways to do remote backups, over rsync, SSH or NFS. SSH is the only one that provides full traffic encryption, for the other two use VPN over untrusted networks, or stunnel over more trusted ones.
-See the following sections for each method.
+There are three supported ways to do remote backups: rsync, SSH or NFS. SSH is the only one that provides full traffic encryption, for the other two use VPN over untrusted networks, or stunnel over more trusted ones.
 
-You might want to fix the IP for the backup server. Set the following in `/etc/network/interfaces.d/eth0`
+1. Fix the IP for the backup server. Set the following in `/etc/network/interfaces.d/eth0`
+
 ```
 auto eth0
 iface eth0 inet static
@@ -87,6 +87,10 @@ netmask 255.255.255.0
 gateway 192.168.1.1
 dns-nameservers 192.168.1.2
 ```
+1. Designate a big enough disk for the backups. HDD is fine to use, instead of SSD since the network throughpout is likely going to be bottleneck. Format it with the ext4 file system and mount it.
+If you are planning to use it for the end-to-end encrypted backups use `mkfs.ext4 -m0 -T largefile4 /dev/mapper/$E2EE_FILE`.
+All the linux filesystems (XFS/BRTFS etc) are all more or less the same for this use, since it's just a small number of very large files. Using the largefile4 option reduces the space wasted on the inodes.
+1. Follow the instruction in the appropriate section below.
 
 ### Rsync backup server setup
 
