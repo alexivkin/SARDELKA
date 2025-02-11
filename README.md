@@ -53,18 +53,18 @@ Types of the backup supported:
 
 ### Running the backup scripts natively
 
-* Copy `backup.config.sample` and `backup.schedule.sample` to `backup.config` and `backup.schedule` respectively. Edit both files to configure your backups.
-* Run `backup-setup`
-
-It will perform the following for you:
-
-* Set up a way to connect to the backup server. An ssh user with the private/public key set up on the backup server for SSHFS or NFS exported share for NFS.
-* For end-to-end encrypted backups: 
-  * Create a storage file on the backup server containing the encrypted filesystem, which will later be mounted with cryptsetup. 
-  * Create a local LUKs key to decrypt the remote file containing the encrypted filesystem. This key never leaves the client to ensure true e2e encryption.
-* Schedule the backup for periodic runs using systemd timers
-
+* If you are planning to backup remotely, not on the local disk, then configure your backup server per instructions in the sections below. 
+* Copy `backup.config.sample` and `backup.schedule.sample` to `backup.config` and `backup.schedule` respectively. Edit both files to configure your backups. 
+* Run `backup-setup`. It will do the following for you:
+  * Set up a way to connect to the backup server. An ssh user with the private/public key set up on the backup server for SSHFS or NFS exported share for NFS.
+  * For the end-to-end encrypted backups: 
+    * Create a storage file on the backup server containing the encrypted filesystem, which will later be mounted with cryptsetup. 
+    * Create a local LUKs key to decrypt the remote file containing the encrypted filesystem. This key never leaves the client to ensure true e2e encryption.
+  * Schedule the backup for periodic runs using systemd timers
 * Run `backup` or `sudo systemd start backup` or wait for the systemd timer to kick it off.
+
+If you are doing E2EE backups, do not forget to backup your encryption key files somewhere separately, otherwise the backups will be useless in event of a failure. 
+It may also be usefull to add a passphrase to the LUKS headers as a manual recovery alternative to the key files.
 
 ### Running as a docker container
 
@@ -73,13 +73,26 @@ It will perform the following for you:
 
 `docker run --rm --name backup -v "$(pwd)/backup.config":/sardelka/backup.config -v "$(pwd)/backup.schedule":/sardelka/backup.schedule -v $(pwd)/logs:/sardelka/logs -v "$(pwd)/backup.status":/sardelka/backup.status -v "/my/source/folder":/source -v "/my/backup/folder":/backups alexivkin/sardelka`
 
-## End-to-end encrypted backups
+##  Backup server setup
 
-End-to-end encryption uses EXT4 fs stored inside a LUKS encrypted file. This allows backup scripts to treat end-to-end encrypted backup as local backups, except for the mounting and unmounting the file systems.
-The mounting can be done with or without transport level encryption.The first one uses SSH, but is slower and prone to hangups, the second one uses NFS, but does not encrypt metadata about the connection. The data itself is encrypted either way.
-Note that although is possible to encrypt NFS traffic metadata with `stunnel`, it's not currently implemented. An alternative to `stunnel` is using a VPN, e.g. `wireguard` to encrypt the NFS traffic.
+There are three supported ways to do remote backups, over rsync, SSH or NFS. SSH is the only one that provides full traffic encryption, for the other two use VPN over untrusted networks, or stunnel over more trusted ones.
+See the following sections for each method.
 
-### E2EE server setup via NFS
+You might want to fix the IP for the backup server. Set the following in `/etc/network/interfaces.d/eth0`
+```
+auto eth0
+iface eth0 inet static
+address 192.168.<your IP here>
+netmask 255.255.255.0
+gateway 192.168.1.1
+dns-nameservers 192.168.1.2
+```
+
+### Rsync backup server setup
+
+Install rsync. That's it.
+
+### NFS backup server setup
 
 To configure NFS export do the following:
 
@@ -100,7 +113,7 @@ touch /media/$disk/status
 chown o+rw /media/$disk/status
 ```
 
-### E2EE server setup via SSH
+### SSH backup server setup
 
 To configure the SSH connection you need to:
 
@@ -123,19 +136,6 @@ Host backupserver
 ```
 5. Test SSH login from the client via `ssh e2eebackup` to ensure the server is known to the local ssh.
 
-You might want to fix the IP for the backup server. Set the following in `/etc/network/interfaces.d/eth0`
-```
-auto eth0
-iface eth0 inet static
-address 192.168.<your IP here>
-netmask 255.255.255.0
-gateway 192.168.1.1
-dns-nameservers 192.168.1.2
-```
-
-Do not forget to backup your keyfile somewhere separately, otherwise the backups will be useless if they are stored a filesystem you are backing up and that filesystem is corrupted. 
-It may also be usefull to add a passphrase to the LUKS headers.
-
 ## Restoring
 
 1. Clone this repo
@@ -152,6 +152,12 @@ If you want your backups to be monitored, schedule `backup-monitor` to run every
 `backup.status` log shows the status of all past backups. For backups to a remote system the remote `backup.status` is authoritative, when deciding whether a new backup is needed or not. The local backup.status is just a convinient copy.
 
 It's recommended to run `backup-analyzer` periodically as well, so you do not have to wait for it to recalculate everything before `backup-cleanup` can be used. Recalculating a big backup may take long time. To schedule it add a symlink to /etc/cron.daily.
+
+## How end-to-end encrypted backups work
+
+End-to-end encryption uses EXT4 fs stored inside a LUKS encrypted file. This allows backup scripts to treat end-to-end encrypted backup as local backups, except for the mounting and unmounting the file systems.
+The mounting can be done with or without transport level encryption.The first one uses SSH, but is slower and prone to hangups, the second one uses NFS, but does not encrypt metadata about the connection. The data itself is encrypted either way.
+Note that although is possible to encrypt NFS traffic metadata with `stunnel`, it's not currently implemented. An alternative to `stunnel` is using a VPN, e.g. `wireguard` to encrypt the NFS traffic.
 
 ## Requirements
 
