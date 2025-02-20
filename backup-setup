@@ -12,6 +12,10 @@ source "$DIR/backup-functions" # load common constants and functions from the sa
 
 #set -x
 set -euo pipefail
+Z=("")
+if [[ -z ${Z-""} ]]; then echo blah; fi
+exit
+
 
 if [[ ! -f $DIR/backup.schedule ]]; then
     echo "Create a $DIR/backup.schedule file and setup at least one backup command
@@ -48,6 +52,8 @@ fi
 mkdir -p $LOGS_DIR
 mkdir -p $KEYFILES_DIR
 
+# invalidate a potentially cached sudo password so the next test works cleanly
+sudo -k
 # check if we can sudo mount, without asking for the sudo password in the first place
 if ! SUDO_ASKPASS=/bin/false sudo -A mount >/dev/null 2>&1; then
     echo "> Giving $USER an ability to run LUKS and mount commands without requiring a password"
@@ -76,6 +82,11 @@ if [[ $GUI_PROMPT == "true" ]]; then
         echo "> Installing libnotify tools"
         sudo apt -y install libnotify-bin
     fi
+fi
+
+if ! dpkg -s pv >/dev/null; then
+    echo "> Installing pv to show progress of removal and shipping out"
+    sudo apt -y install pv
 fi
 
 # Setup SSH if one is not setup already
@@ -121,10 +132,10 @@ EOF
     fi
 fi
 
-# Grab the server SSH key
-if [[ -z $KEYS_OF_SERVERS ]]; then
+# If keys is not defined or empty grab the server SSH key
+if [[ -z ${KEYS_OF_SERVERS-""} ]]; then
     SERVER_KEY=$(ssh-keyscan $SERVER_REAL 2>&1 | grep ssh-ed25519)
-    echo 'KEYS_OF_SERVERS=("'$$SERVER_KEY'")' >> $DIR/backup.config
+    echo 'KEYS_OF_SERVERS=("'$SERVER_KEY'")' >> $DIR/backup.config
 else
     # check if the server key is already specified
     match="false"
@@ -284,5 +295,5 @@ Do not forget to backup your $KEYFILES_DIR/$E2EE_FILE somewhere separately and/o
 
 mkdir $TEMP_MOUNT; sudo mount $SERVER:$E2EE_FOLDER/ $TEMP_MOUNT
 cryptsetup luksAddKey $TEMP_MOUNT/$E2EE_FILE --key-file $KEYFILES_DIR/$E2EE_FILE
-sudo umount $TEMP_MOUNT; rm $TEMP_MOUNT
+sudo umount $TEMP_MOUNT; rmdir $TEMP_MOUNT
 "

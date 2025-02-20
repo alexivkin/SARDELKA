@@ -18,7 +18,7 @@
 #	configurationBackup options: list of folders to get file/directory lists, remote rsync URL
 #	"remote" - this is an incoming backup. the record is then used to check that a remotely initiated backup run succssfully within the last n days
 #
-system1		syntheticFullBackup	1		/home				# backup /home
+system1		syntheticFullBackup	1		/home,sudo,e2nfs://backserver/media/backups/system1			# backup /home with sudo to a remote end to end encrypted file system
 full-system	syntheticFullBackup	7		/,sudo				# backup everything
 system2		fullBackup 		1		/media/Archive/Folders/,keep	# full backup
 remote1		syntheticFullBackup 	1		user@server.com:		# backup remote system

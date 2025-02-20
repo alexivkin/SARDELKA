@@ -1,19 +1,77 @@
 *~
+# allow certain files and folders to not be backed up
+
 donotbackup*
-.adobe/Flash_Player/AssetCache/
 .cache/
 .cpan/
 .dbus/
 .gvfs/
-.java/deployment/cache/*
 .local/share/Trash/*
-.mozilla/firefox/*.default/Cache/*
-.mozilla/firefox/*.default/OfflineCache/*
 .thumbnails/
-.thunderbird/*.default/Cache/*
 .Xauthority
 .xsession-errors
 .local/share/icons
+
 # exclude files but not folders themselves as these are critical for windows apps to work
 .wine*/drive_c/users/*/Temp/**
 .wine*/drive_c/users/*/Local Settings/Temporary Internet Files/**
+.wine*/drive_c/users/*/Local Settings/Temporary Internet Files/**
+.wine*/drive_c/users/*/Temp/**
+.wine/dosdevices/
+
+.adobe/Flash_Player/AssetCache/
+.java/deployment/cache/*
+
+.config/chromium/Certificate*/
+.config/chromium/Default/Service Worker/CacheStorage/
+.config/Code/CachedData/
+.config/**/GPUCache/
+.config/**/logs/
+.config/Slack/**/*Cache*/
+.config/Slack/Cache
+.config/Slack/*Stats*/
+
+.gimp-*/gimpswap.*
+
+# global message is Thunderbird's search hash and can be rebuilt
+global-messages-db.sqlite*
+
+# index and cache
+.java/deployment/cache/*
+.kde/share/apps/nepomuk/repository/main/data/virtuosobackend/
+.kube/*cache/
+.minikube/machines/
+.local/share/akonadi/akonadiserver*
+.local/share/akonadi/db_data/**
+
+# baloo is large, often changes and can be reindexed
+.local/share/baloo/
+.local/share/icons
+.local/share/Trash/*
+.local/share/zeitgeist/fts.index/
+.nv/GLCache/
+.local/share/TelegramDesktop/tdata/user_data
+
+mozilla/firefox/*.default/Cache/*
+mozilla/firefox/*.default/OfflineCache/*
+mozilla/Crash Reports/*
+mozilla/firefox/Crash Reports/
+
+snap/mozilla/*/firefox/*.default/Cache/*
+snap/mozilla/*/firefox/*.default/OfflineCache/*
+snap/mozilla/*/Crash Reports/*
+snap/mozilla/*/firefox/Crash Reports/
+
+.thunderbird/Crash Reports/*
+.thunderbird/*.default/Cache/*
+.thunderbird/*.default/datareporting/archived/
+snap/thunderbird/*/Crash Reports/*
+snap/thunderbird/*/*.default/Cache/*
+snap/thunderbird/*/*.default/datareporting/archived/
+
+.PlayOnLinux/wineprefix/*/dosdevices/
+
+.vagrant.d/boxes/
+.vagrant.d/tmp/
+
+.android/avd/

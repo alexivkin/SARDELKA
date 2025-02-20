@@ -167,6 +167,7 @@ Note that although is possible to encrypt NFS traffic metadata with `stunnel`, i
 
 * It's full of Bashisms (the best kind of -isms) and needs a bash 4.2 or above.
 * Synthetic Full Backups work only on file systems that support proper hardlinks (hint, not NTFS)
+* backup-setup assumes a debian based distro, i.e. the deb package manager.
 
 ## Rarely asked questions
 
