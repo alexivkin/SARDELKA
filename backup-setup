@@ -12,10 +12,6 @@ source "$DIR/backup-functions" # load common constants and functions from the sa
 
 #set -x
 set -euo pipefail
-Z=("")
-if [[ -z ${Z-""} ]]; then echo blah; fi
-exit
-
 
 if [[ ! -f $DIR/backup.schedule ]]; then
     echo "Create a $DIR/backup.schedule file and setup at least one backup command

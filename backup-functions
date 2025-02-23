@@ -301,6 +301,12 @@ syntheticFullBackup() {
 
     if [[ -f "$DIR/$backupset.exclude" ]]; then # add exclusions if present
         opts+=(--exclude-from "$DIR/$backupset.exclude")
+    else
+        # break here because it's very likely this was by mistake
+        echo "There is no $DIR/$backupset.exclude file. Copy one from an example file or create an empty one to proceed" | tee -a $log
+        echo "$DATE 61 $backupset # missing exclude file" >> $STATUS_LOG
+        teardownBackup
+        return
     fi
 
     # verbose, archive (-rlptgoD), dont cross file systems and preserve hard links. add -x to not cross file systems

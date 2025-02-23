@@ -18,12 +18,20 @@
 #	configurationBackup options: list of folders to get file/directory lists, remote rsync URL
 #	"remote" - this is an incoming backup. the record is then used to check that a remotely initiated backup run succssfully within the last n days
 #
-system1		syntheticFullBackup	1		/home,sudo,e2nfs://backserver/media/backups/system1			# backup /home with sudo to a remote end to end encrypted file system
-full-system	syntheticFullBackup	7		/,sudo				# backup everything
+
+# backup all user /home folders with sudo to a remote end to end encrypted file system over nfs
+system1		syntheticFullBackup	1		/home,sudo,e2nfs://backserver/media/backups/system1
+# backup everything using end to end encryption over ssh
+full-system	syntheticFullBackup	7		/,sudo,,e2e://backserver/media/backups/system1
+# backup the given folder over to $BACKUPDESTDIR, keeping deleted and modified files under $BACKUPDESTDIR/$backupset.backups 
 system2		fullBackup 		1		/media/Archive/Folders/,keep	# full backup
-remote1		syntheticFullBackup 	1		user@server.com:		# backup remote system
-sysconfig	configurationBackup 	7		/media/Folder1,/media/Folder2	# system config and media folder lists
-photos		folderBackup 		7		~/Documents			# just the folder backup
-remote2		tsmBackup 		7		user,22				# tivoli storage manager backup
-fromremote1	syntheticFullBackup	1		remote				# expected backup from a remote system
-fromremote2	fullBackup		7		remote
+# backup remote system, ssh-ing to it to copy files over to $BACKUPDESTDIR  
+remote1		syntheticFullBackup 	1		user@server.com:
+# backup system configuration, including file lists, to 
+sysconfig	configurationBackup 	7		/media/Folder1,/media/Folder2,e2ee://backserver/media/backups/system1
+# tar.gz copy of the folder to $BACKUPDESTDIR
+photos		folderBackup 		7		~/Documents		
+# tivoli storage manager backup
+remote2		tsmBackup 		7		user,22
+# check for the expected incoming backup from a remote system				
+fromremote1	syntheticFullBackup	1		remote				
